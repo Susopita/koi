@@ -1,0 +1,6 @@
+(defn abs-val [x]
+  (let [is-neg (< x 0)]
+    (if is-neg (- 0 x) x)))
+
+(defn sum-below [n]
+  (loop [i 0] (< i n) (+ i 1) (+ i 1)))

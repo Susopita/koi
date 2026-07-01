@@ -6,8 +6,6 @@
 
 **Salida:** `/tmp/ast.json` (AST serializado)
 
-**Timeline:** Días 1-4 de 1 semana
-
 **Crate:** `koi-ast` (binario)
 
 ---

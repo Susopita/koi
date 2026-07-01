@@ -1,0 +1,19 @@
+; Exercises every AST node kind in one program, for schema tests.
+(defstruct Pair [a i64] [b i64])
+
+(defn deref-helper [x]
+  (+ *x 1))
+
+(defn literals []
+  [1 1.5 "hi" true false])
+
+(defn kitchen-sink [n]
+  (let [flag true
+        arr [1 2 [3 4]]
+        p (new Pair)]
+    (if flag
+      (loop [i 0] (< i n) (+ i 1) (+ i (field p a)))
+      (index arr (deref-helper &n)))))
+
+(defn use-lambda []
+  (kitchen-sink ((lambda [z] z) 5)))

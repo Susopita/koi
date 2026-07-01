@@ -1,0 +1,5 @@
+(defn apply-func [f x]
+  (f x))
+
+(defn main []
+  (apply-func (lambda [y] (+ y 1)) 5))

@@ -1,0 +1,7 @@
+(defstruct Point [x i64] [y i64])
+
+(defn make-origin []
+  (new Point))
+
+(defn get-x [p]
+  (field p x))

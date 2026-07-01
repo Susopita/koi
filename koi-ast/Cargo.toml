@@ -4,3 +4,33 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Test suite lives in ../test/test-koi-ast/ (not the crate-local tests/
+# directory) so it sits alongside future test/test-koi-ir, test/test-koi-assembly
+# suites. Each file below is its own integration-test binary, linked against
+# the koi-ast lib target.
+[[test]]
+name = "lexer_tests"
+path = "../test/test-koi-ast/lexer_tests.rs"
+
+[[test]]
+name = "parser_tests"
+path = "../test/test-koi-ast/parser_tests.rs"
+
+[[test]]
+name = "parser_errors_tests"
+path = "../test/test-koi-ast/parser_errors_tests.rs"
+
+[[test]]
+name = "scope_tests"
+path = "../test/test-koi-ast/scope_tests.rs"
+
+[[test]]
+name = "schema_tests"
+path = "../test/test-koi-ast/schema_tests.rs"
+
+[[test]]
+name = "cli_tests"
+path = "../test/test-koi-ast/cli_tests.rs"
