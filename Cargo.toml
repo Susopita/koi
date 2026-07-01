@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "koi-ast", 
+    "koi-ir", 
+    "koi-assembly"
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2026"
+authors = ["Sopitas"]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.10"
+
+[profile.release]
+opt-level = 3
+lto = true
