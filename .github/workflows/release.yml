@@ -1,0 +1,92 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (x86_64 Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-unknown-linux-gnu
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y gcc
+      - name: cargo test
+        run: cargo test --release
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: [test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: koi-${{ github.ref_name }}-x86_64-linux.tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            archive: koi-${{ github.ref_name }}-aarch64-linux.tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive: koi-${{ github.ref_name }}-x86_64-macos.tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive: koi-${{ github.ref_name }}-aarch64-macos.tar.gz
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gcc
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Package binaries
+        run: |
+          mkdir -p dist
+          for bin in koi-ast koi-ir koi-assembly; do
+            cp target/${{ matrix.target }}/release/$bin dist/
+          done
+          cd dist
+          tar czf ../${{ matrix.archive }} .
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  release:
+    name: Create Release
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Organize artifacts
+        run: |
+          mkdir uploads
+          find artifacts -type f -name "*.tar.gz" -exec cp {} uploads/ \;
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: uploads/*
+          generate_release_notes: true
