@@ -1,21 +1,83 @@
-[workspace]
-resolver = "2"
-members = [
-    "koi-ast", 
-    "koi-ir", 
-    "koi-assembly"
-]
-
-[workspace.package]
+[package]
+name = "koi"
 version = "0.1.0"
-edition = "2026"
+edition = "2024"
 authors = ["Sopitas"]
 
-[workspace.dependencies]
+[dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 regex = "1.10"
+clap = { version = "4", features = ["derive"] }
 
 [profile.release]
 opt-level = 3
 lto = true
+
+###############################################################################
+# Tests — migration from 3-crate workspace
+###############################################################################
+
+[[test]]
+name = "frontend_lexer"
+path = "test/test-frontend/lexer_tests.rs"
+
+[[test]]
+name = "frontend_parser"
+path = "test/test-frontend/parser_tests.rs"
+
+[[test]]
+name = "frontend_parser_errors"
+path = "test/test-frontend/parser_errors_tests.rs"
+
+[[test]]
+name = "frontend_scope"
+path = "test/test-frontend/scope_tests.rs"
+
+[[test]]
+name = "frontend_schema"
+path = "test/test-frontend/schema_tests.rs"
+
+[[test]]
+name = "frontend_cli"
+path = "test/test-frontend/cli_tests.rs"
+
+[[test]]
+name = "middle_end_types"
+path = "test/test-middle-end/types_tests.rs"
+
+[[test]]
+name = "middle_end_unification"
+path = "test/test-middle-end/unification_tests.rs"
+
+[[test]]
+name = "middle_end_inference"
+path = "test/test-middle-end/inference_tests.rs"
+
+[[test]]
+name = "middle_end_monomorphizer"
+path = "test/test-middle-end/monomorphizer_tests.rs"
+
+[[test]]
+name = "middle_end_lambda_lifter"
+path = "test/test-middle-end/lambda_lifter_tests.rs"
+
+[[test]]
+name = "middle_end_ir_generator"
+path = "test/test-middle-end/ir_generator_tests.rs"
+
+[[test]]
+name = "middle_end_pipeline"
+path = "test/test-middle-end/pipeline_tests.rs"
+
+[[test]]
+name = "middle_end_cli"
+path = "test/test-middle-end/cli_tests.rs"
+
+[[test]]
+name = "backend_pipeline_cli"
+path = "test/test-backend/pipeline_cli_tests.rs"
+
+[[test]]
+name = "backend_codegen"
+path = "test/test-backend/backend_tests.rs"
