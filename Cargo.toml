@@ -81,3 +81,7 @@ path = "test/test-backend/pipeline_cli_tests.rs"
 [[test]]
 name = "backend_codegen"
 path = "test/test-backend/backend_tests.rs"
+
+[[test]]
+name = "backend_cross_codegen"
+path = "test/test-backend/cross_backend_tests.rs"

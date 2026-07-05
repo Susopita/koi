@@ -1,33 +1,118 @@
-pub mod abi;
-pub mod codegen;
-pub mod optimizer;
-pub mod peephole;
-pub mod register_allocator;
+//! Architecture-specific backends.
+//!
+//! Each subdirectory (`x86_64`, `arm64`, `riscv`) implements a
+//! [`TargetBackend`] that translates the architecture-agnostic [`IRProgram`]
+//! into final assembly text.
+//!
+//! The [`compile_ir_to_assembly`] function dispatches to the right backend
+//! based on the [`TargetArch`] argument.
 
-use serde::Serialize;
+use std::fmt;
 
 use crate::middle_end::ir::IRProgram;
-use codegen::X86Generator;
-use optimizer::Optimizer;
-use peephole::Peephole;
+
+// ---------------------------------------------------------------------------
+// Public sub-modules (architecture-agnostic)
+// ---------------------------------------------------------------------------
+
+pub mod optimizer; // IR-level optimiser (shared by all targets)
+
+// ---------------------------------------------------------------------------
+// Target architecture enum
+// ---------------------------------------------------------------------------
+
+/// Supported target architectures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetArch {
+    X8664,
+    Arm64,
+    RiscV,
+}
+
+impl TargetArch {
+    /// Parse from a CLI string.
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "x86_64" | "x86-64" | "amd64" => Ok(TargetArch::X8664),
+            "arm64" | "aarch64" => Ok(TargetArch::Arm64),
+            "riscv" | "riscv64" => Ok(TargetArch::RiscV),
+            other => Err(format!(
+                "unsupported target '{other}'; expected x86_64, arm64, or riscv"
+            )),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TargetArch::X8664 => "x86_64",
+            TargetArch::Arm64 => "arm64",
+            TargetArch::RiscV => "riscv",
+        }
+    }
+}
+
+impl Default for TargetArch {
+    fn default() -> Self {
+        TargetArch::X8664
+    }
+}
+
+impl fmt::Display for TargetArch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Target backend trait
+// ---------------------------------------------------------------------------
+
+/// Every target backend must implement this trait.
+pub trait TargetBackend {
+    /// The human-readable name (e.g. `"x86_64"`).
+    fn name(&self) -> &'static str;
+
+    /// Translate an IR program into assembly text.
+    fn generate_code(&self, program: &IRProgram) -> Result<String, CompileError>;
+}
+
+// ---------------------------------------------------------------------------
+// Backend modules (one per architecture)
+// ---------------------------------------------------------------------------
+
+pub mod x86_64;
+pub mod arm64;
+pub mod riscv;
+
+use std::sync::OnceLock;
+
+/// Retrieve the singleton backend for a given architecture.
+pub fn backend_for(arch: TargetArch) -> &'static dyn TargetBackend {
+    match arch {
+        TargetArch::X8664 => {
+            static X86: OnceLock<x86_64::Backend> = OnceLock::new();
+            X86.get_or_init(|| x86_64::Backend::new())
+        }
+        TargetArch::Arm64 => {
+            static ARM: OnceLock<arm64::Backend> = OnceLock::new();
+            ARM.get_or_init(|| arm64::Backend::new())
+        }
+        TargetArch::RiscV => {
+            static RV: OnceLock<riscv::Backend> = OnceLock::new();
+            RV.get_or_init(|| riscv::Backend::new())
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ErrorLocation {
-    pub file: String,
-    pub line: usize,
-    pub column: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct CompileError {
     pub phase: String,
     pub severity: String,
     pub message: String,
-    pub location: ErrorLocation,
 }
 
 impl CompileError {
@@ -36,46 +121,24 @@ impl CompileError {
             phase: phase.to_string(),
             severity: "error".to_string(),
             message: message.into(),
-            location: ErrorLocation {
-                file: String::new(),
-                line: 0,
-                column: 0,
-            },
-        }
-    }
-
-    pub fn io(path: &str, error: impl std::fmt::Display) -> Self {
-        CompileError {
-            phase: "io".to_string(),
-            severity: "error".to_string(),
-            message: format!("{path}: {error}"),
-            location: ErrorLocation {
-                file: path.to_string(),
-                line: 0,
-                column: 0,
-            },
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Compile entry points
+// Main entry points
 // ---------------------------------------------------------------------------
 
-/// Compile an in-memory [`IRProgram`] into assembly text, applying
-/// optimizations and peephole passes along the way.
-pub fn compile_ir_to_assembly(program: &IRProgram) -> Result<String, CompileError> {
-    let mut program = program.clone();
-    Optimizer::optimize_program(&mut program);
-    let asm = X86Generator::new()
-        .generate(&program)
-        .map_err(|e| CompileError::new("codegen", e))?;
-    Ok(Peephole::optimize(&asm))
+/// Compile an IR program into assembly for the given target architecture.
+pub fn compile_ir_to_assembly(
+    program: &IRProgram,
+    arch: TargetArch,
+) -> Result<String, CompileError> {
+    backend_for(arch).generate_code(program)
 }
 
-/// Convenience wrapper — parse IR from a JSON string, then compile.
-/// Kept for backward compatibility with existing tests.
-pub fn compile_ir_json_to_assembly(ir_json: &str) -> Result<String, CompileError> {
+/// Compile from a JSON IR string into assembly for the given target.
+pub fn compile_ir_json_to_assembly(ir_json: &str, arch: TargetArch) -> Result<String, CompileError> {
     let program: IRProgram =
         serde_json::from_str(ir_json).map_err(|e| CompileError::new("ir_parser", e.to_string()))?;
     if program.functions.is_empty() {
@@ -84,13 +147,5 @@ pub fn compile_ir_json_to_assembly(ir_json: &str) -> Result<String, CompileError
             "IR program does not contain any functions",
         ));
     }
-    compile_ir_to_assembly(&program)
-}
-
-/// Read IR from a file and write the resulting assembly to another file.
-pub fn compile_ir_file_to_output(input: &str, output: &str) -> Result<(), CompileError> {
-    let ir_json =
-        std::fs::read_to_string(input).map_err(|e| CompileError::io(input, e))?;
-    let assembly = compile_ir_json_to_assembly(&ir_json)?;
-    std::fs::write(output, assembly).map_err(|e| CompileError::io(output, e))
+    compile_ir_to_assembly(&program, arch)
 }

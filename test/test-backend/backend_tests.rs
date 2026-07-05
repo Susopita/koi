@@ -1,4 +1,4 @@
-use koi::backend::compile_ir_json_to_assembly;
+use koi::backend::{compile_ir_json_to_assembly, TargetArch};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -40,7 +40,7 @@ fn simple_program_lowers_to_main_and_direct_call() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected codegen to succeed");
     assert!(asm.contains(".globl main"));
     assert!(asm.contains("add:"));
     assert!(asm.contains("call\tadd"));
@@ -89,7 +89,7 @@ fn phi_nodes_are_lowered_to_edge_moves() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected phi lowering to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected phi lowering to succeed");
     assert!(!asm.contains("\"phi\""));
     assert!(asm.contains(".Lselect_merge:"));
     assert!(asm.contains(".Lselect_then:"));
@@ -125,7 +125,7 @@ fn indirect_calls_and_memory_instructions_codegen() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected memory/codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected memory/codegen to succeed");
     assert!(asm.contains("call\tmalloc"));
     assert!(asm.contains("call\t*%rax"));
     assert!(asm.contains("leaq"));
@@ -176,7 +176,7 @@ fn loop_phi_back_edge_values_survive_optimization() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected loop phi lowering to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected loop phi lowering to succeed");
     assert!(asm.contains(".Lloop_test_loop_body:"));
     assemble_if_possible(&asm, "loop_phi_program");
 }
@@ -202,7 +202,7 @@ fn mul_by_power_of_two_strength_reduces_to_shift() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected codegen to succeed");
     assert!(asm.contains("salq"), "expected strength reduction to emit a shift instruction");
     assert!(!asm.contains("imulq"), "expected no imulq for x * 8 after strength reduction");
     assemble_if_possible(&asm, "mul_pow2_program");
@@ -229,7 +229,7 @@ fn div_by_power_of_two_strength_reduces_to_shift() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected codegen to succeed");
     assert!(asm.contains("sarq"), "expected strength reduction to emit a shift instruction");
     assemble_if_possible(&asm, "div_pow2_program");
 }
@@ -258,7 +258,7 @@ fn set_index_then_get_index_stores_and_reloads_at_computed_address() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected set_index codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected set_index codegen to succeed");
     assert!(asm.contains("call\tmalloc"));
     // `emit_set_index` stores the value into the computed address...
     assert!(
@@ -310,7 +310,7 @@ fn set_field_then_get_field_stores_and_reloads_at_computed_offset() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected set_field codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected set_field codegen to succeed");
     assert!(asm.contains("call\tmalloc"));
     // `emit_set_field` stores each value into `offset(object_ptr)` -- the
     // "fn_ptr" field is discovered first (offset 0) and "env_ptr" second
@@ -374,7 +374,7 @@ fn write_only_field_gets_its_own_offset_not_offset_zero() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected write-only field codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected write-only field codegen to succeed");
     // "b" is the first (struct_type, field) pair encountered in instruction
     // order (via its `set_field`, before its own later `get_field`), so it
     // must land at offset 0; "a"'s `set_field` comes second and, if the
@@ -418,7 +418,7 @@ fn f64_const_and_print_produces_correct_stdout() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected f64 const codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected f64 const codegen to succeed");
     assert!(asm.contains("movsd"), "expected a movsd instruction for the f64 constant");
     assert!(asm.contains(".double"), "expected an interned .double literal");
     let stdout = assemble_link_and_run(&asm, "f64_const_print");
@@ -431,7 +431,7 @@ fn f64_arithmetic_add_sub_mul_div_produce_correct_results() {
     // (+ 1.5 2.25) = 3.75
     let add_ir = binop_print_program("+", 1.5, 2.25);
     let stdout = assemble_link_and_run(
-        &compile_ir_json_to_assembly(&add_ir).expect("expected f64 add codegen to succeed"),
+        &compile_ir_json_to_assembly(&add_ir, TargetArch::X8664).expect("expected f64 add codegen to succeed"),
         "f64_add",
     );
     assert_eq!(stdout.trim(), "3.750000");
@@ -439,7 +439,7 @@ fn f64_arithmetic_add_sub_mul_div_produce_correct_results() {
     // (- 5.5 2.25) = 3.25
     let sub_ir = binop_print_program("-", 5.5, 2.25);
     let stdout = assemble_link_and_run(
-        &compile_ir_json_to_assembly(&sub_ir).expect("expected f64 sub codegen to succeed"),
+        &compile_ir_json_to_assembly(&sub_ir, TargetArch::X8664).expect("expected f64 sub codegen to succeed"),
         "f64_sub",
     );
     assert_eq!(stdout.trim(), "3.250000");
@@ -447,7 +447,7 @@ fn f64_arithmetic_add_sub_mul_div_produce_correct_results() {
     // (* 2.5 4.0) = 10.0
     let mul_ir = binop_print_program("*", 2.5, 4.0);
     let stdout = assemble_link_and_run(
-        &compile_ir_json_to_assembly(&mul_ir).expect("expected f64 mul codegen to succeed"),
+        &compile_ir_json_to_assembly(&mul_ir, TargetArch::X8664).expect("expected f64 mul codegen to succeed"),
         "f64_mul",
     );
     assert_eq!(stdout.trim(), "10.000000");
@@ -455,7 +455,7 @@ fn f64_arithmetic_add_sub_mul_div_produce_correct_results() {
     // (/ 7.5 2.5) = 3.0
     let div_ir = binop_print_program("/", 7.5, 2.5);
     let stdout = assemble_link_and_run(
-        &compile_ir_json_to_assembly(&div_ir).expect("expected f64 div codegen to succeed"),
+        &compile_ir_json_to_assembly(&div_ir, TargetArch::X8664).expect("expected f64 div codegen to succeed"),
         "f64_div",
     );
     assert_eq!(stdout.trim(), "3.000000");
@@ -511,7 +511,7 @@ fn f64_comparison_produces_correct_boolean() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected f64 comparison codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected f64 comparison codegen to succeed");
     assert!(asm.contains("ucomisd"), "expected a ucomisd instruction for the f64 comparison");
     let stdout = assemble_link_and_run(&asm, "f64_compare");
     assert_eq!(stdout.trim(), "1", "expected (< 1.5 2.5) to be true (prints 1)");
@@ -560,7 +560,7 @@ fn f64_parameter_and_return_value_round_trip_through_a_call() {
 }
 "#;
 
-    let asm = compile_ir_json_to_assembly(ir).expect("expected f64 param/return codegen to succeed");
+    let asm = compile_ir_json_to_assembly(ir, TargetArch::X8664).expect("expected f64 param/return codegen to succeed");
     let stdout = assemble_link_and_run(&asm, "f64_param_return");
     assert_eq!(stdout.trim(), "9.000000");
 }

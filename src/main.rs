@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use koi::pipeline::{BuildError, BuildMode};
+use koi::pipeline::{BuildMode, PipelineResult};
 
 #[derive(Parser)]
 #[command(
@@ -22,13 +22,24 @@ enum Commands {
         /// Path to the .carp source file
         file: PathBuf,
 
-        /// Stop after parsing/scope analysis and print the AST to stdout
+        /// (IDE mode) Only parse and print structured JSON to stdout —
+        /// no code generation, no human-readable messages.
         #[arg(long, conflicts_with = "check")]
         dump_ast: bool,
 
-        /// Run type-checking only (no code generation)
+        /// (IDE mode) Type-check only — emit structured JSON to stdout,
+        /// no code generation.
         #[arg(long, conflicts_with = "dump_ast")]
         check: bool,
+
+        /// Pretty-print the JSON output (default in IDE modes is compact).
+        #[arg(long)]
+        pretty: bool,
+
+        /// Target architecture (x86_64, arm64, riscv).
+        /// Defaults to x86_64.
+        #[arg(long, default_value = "x86_64")]
+        target: String,
     },
 }
 
@@ -40,7 +51,17 @@ fn main() {
             file,
             dump_ast,
             check,
+            pretty,
+            target,
         } => {
+            let arch = match koi::backend::TargetArch::from_str(target) {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            };
+
             let input = match std::fs::read_to_string(file) {
                 Ok(s) => s,
                 Err(e) => {
@@ -57,48 +78,57 @@ fn main() {
                 BuildMode::Full
             };
 
-            match run_build(&input, file, mode) {
-                Ok(Some(ast)) => {
-                    // --dump-ast: print AST as pretty JSON to stdout
-                    let json =
-                        serde_json::to_string_pretty(&ast).expect("AST serialization should not fail");
-                    println!("{json}");
+            let (result, diag) = koi::pipeline::run_pipeline(&input, file, mode, arch);
+
+            match mode {
+                BuildMode::DumpAst | BuildMode::Check => {
+                    if let PipelineResult::Json(json) = &result {
+                        if *pretty {
+                            if let Ok(value) =
+                                serde_json::from_str::<serde_json::Value>(json)
+                            {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&value).unwrap()
+                                );
+                            }
+                        } else {
+                            println!("{json}");
+                        }
+                        std::io::Write::flush(&mut std::io::stdout()).ok();
+                    }
+                    if diag.has_errors() {
+                        std::process::exit(1);
+                    }
                 }
-                Ok(None) => {}
-                Err(e) => {
-                    eprintln!("{e}");
-                    std::process::exit(1);
+                BuildMode::Full => {
+                    let had_errors = diag.has_errors();
+                    for d in &diag.diagnostics {
+                        let loc = d
+                            .location
+                            .as_ref()
+                            .map(|l| format!(":{}:{}", l.line, l.column))
+                            .unwrap_or_default();
+                        if d.severity == "error" {
+                            eprintln!("[{}]{loc} {}", d.phase, d.message);
+                        } else {
+                            eprintln!("[{}]{loc} warning: {}", d.phase, d.message);
+                        }
+                    }
+
+                    if !had_errors {
+                        let exe_name = file
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("output");
+                        eprintln!(
+                            "[koi] Build complete: output.s + executable '{exe_name}'"
+                        );
+                    } else {
+                        std::process::exit(1);
+                    }
                 }
             }
         }
     }
-}
-
-fn run_build(
-    input: &str,
-    src_path: &PathBuf,
-    mode: BuildMode,
-) -> Result<Option<koi::frontend::ast::ASTNode>, BuildError> {
-    // Stage 1: Frontend (always)
-    let ast = koi::pipeline::run_frontend(input)?;
-
-    if mode == BuildMode::DumpAst {
-        return Ok(Some(ast));
-    }
-
-    // Stage 2: Middle-end
-    let ir = koi::pipeline::run_middle_end(&ast)?;
-
-    if mode == BuildMode::Check {
-        eprintln!("[check] No errors found.");
-        return Ok(None);
-    }
-
-    // Stage 3: Backend
-    koi::pipeline::run_backend(ir, src_path)?;
-
-    eprintln!("[koi] Build complete: output.s + executable '{}'", 
-        src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output"));
-
-    Ok(None)
 }

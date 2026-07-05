@@ -30,6 +30,11 @@ fn valid_build_check_exits_zero() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // In --check mode, output is JSON to stdout.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("check output must be valid JSON");
+    assert_eq!(value["success"], true, "check should succeed: {value}");
 }
 
 #[test]
@@ -44,9 +49,19 @@ fn check_with_undeclared_variable_reports_error_and_exits_nonzero() {
     let _ = fs::remove_file(&path);
 
     assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    // In --check mode, diagnostics are JSON on stdout.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("output must be valid JSON in --check mode");
+    assert_eq!(value["success"], false, "expected failure, got {value}");
+    let diags = value["diagnostics"].as_array().expect("diagnostics must be an array");
+    assert!(!diags.is_empty(), "expected at least one diagnostic");
+    let phases: Vec<&str> = diags
+        .iter()
+        .filter_map(|d| d["phase"].as_str())
+        .collect();
     assert!(
-        stderr.contains("[scope]") || stderr.contains("[middle_end]"),
-        "expected error, got: {stderr}"
+        phases.iter().any(|p| *p == "scope" || *p == "inference"),
+        "expected scope or inference phase, got {phases:?}"
     );
 }

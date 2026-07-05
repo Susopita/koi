@@ -259,7 +259,19 @@ fn defn_from_sexpr(
 
     let name = sym_str(&items[1], "defn: name must be a symbol")?;
     let params = extract_param_list(&items[2])?;
-    let body = expr_from_sexpr(&items[3], struct_fields)?;
+
+    // Multiple body forms are wrapped in an implicit `do`.
+    let body = if items.len() == 4 {
+        expr_from_sexpr(&items[3], struct_fields)?
+    } else {
+        let body_exprs: Result<Vec<_>, _> = items[3..]
+            .iter()
+            .map(|e| expr_from_sexpr(e, struct_fields))
+            .collect();
+        let body_exprs = body_exprs?;
+        let ret_ty = body_exprs.last().map(|e| e.get_type().clone()).unwrap_or(fresh());
+        TypedExpr::Do(body_exprs, ret_ty)
+    };
     let return_type = body.get_type().clone();
 
     Ok(TopLevel::Defn {

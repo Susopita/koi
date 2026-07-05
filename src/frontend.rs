@@ -7,3 +7,5 @@ pub mod sexpr;
 pub mod macro_expander;
 pub mod typed_ast;
 pub mod type_inferer;
+pub mod borrow_checker;
+pub mod diagnostics;
