@@ -1,5 +1,4 @@
 pub mod abi;
-pub mod codegen;
 pub mod peephole;
 pub mod instruction_select;
 pub mod materializer;
