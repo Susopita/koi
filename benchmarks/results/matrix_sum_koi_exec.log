@@ -1,3 +1,0 @@
- 
-  Warning: Command took less than 5 ms to complete. Note that the results might be inaccurate because hyperfine can not calibrate the shell startup time much more precise than this limit. You can try to use the `-N`/`--shell=none` option to disable the shell completely.
-  Warning: Ignoring non-zero exit code.

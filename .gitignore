@@ -5,9 +5,17 @@ ROADMAP.md
 TASKS.md
 
 # Compiled binaries generados por koi build
-fib
-quicksort
-matrix_sum
-lambda_map
-output.s
+/fib
+/quicksort
+/matrix_sum
+/lambda_map
+
+# Assembly generado por koi build (raiz y benchmarks)
+*.s
+
+# Benchmarks results: solo trackear csv y plots/
+benchmarks/results/**
+!benchmarks/results/benchmarks.csv
+!benchmarks/results/plots/
+!benchmarks/results/plots/**
 
