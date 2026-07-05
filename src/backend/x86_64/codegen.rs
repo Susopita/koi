@@ -741,7 +741,6 @@ impl X86Generator {
             Some("f64") => ".LC_print_f64",
             _ => ".LC_print_i64",
         };
-        self.emit_instr("leaq", &[&format!("{format_label}(%rip)"), "%rdi"]);
         if value_type == Some("f64") {
             // Floats (even for a variadic call like printf) are passed in
             // XMM registers, not %rsi.
@@ -754,6 +753,7 @@ impl X86Generator {
             self.load_named_value(layout, argument, "%rsi")?;
             self.emit_instr("xorq", &["%rax", "%rax"]);
         }
+        self.emit_instr("leaq", &[&format!("{format_label}(%rip)"), "%rdi"]);
         self.emit_instr("call", &["printf"]);
         if let Some(result) = result {
             let dst = layout_home(layout, result)?;

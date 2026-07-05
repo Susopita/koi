@@ -149,6 +149,15 @@ impl LinearScanAllocator {
                 continue;
             }
 
+            // Floats must stay stack-allocated since the allocator only handles GP registers.
+            if value_types.get(&interval.var).map(String::as_str) == Some("f64") {
+                let slot = spill_slots[&interval.var];
+                interval.location = Some(ValueLocation::Stack(slot));
+                locations.insert(interval.var.clone(), interval.location.clone().unwrap());
+                active.push(interval);
+                continue;
+            }
+
             // Expire old intervals.
             active.retain(|iv| {
                 if iv.end <= interval.start {

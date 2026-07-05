@@ -675,8 +675,17 @@ fn zig_binary() -> Option<PathBuf> {
         }
     }
 
-    let candidate = PathBuf::from("/home/aleu/snap/codex/34/zig-x86_64-linux-0.16.0/zig");
-    candidate.is_file().then_some(candidate)
+    // Search for "zig" in the directories specified in the system's PATH
+    if let Ok(path_var) = std::env::var("PATH") {
+        for path in std::env::split_paths(&path_var) {
+            let candidate = path.join("zig");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
 }
 
 fn temp_path(stem: &str) -> PathBuf {
