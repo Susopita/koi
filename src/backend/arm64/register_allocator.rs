@@ -406,32 +406,9 @@ impl InterferenceGraph {
                 let reg_name = self.phys_regs[c].to_string();
                 result.insert(self.nodes[idx].name.clone(), reg_name);
             } else {
-                // All colours taken — fallback: assign a real register
-                // anyway.  Proper spilling (load/store from stack frame)
-                // is not yet implemented; this may produce incorrect code
-                // for programs that exceed register pressure, but at
-                // least the assembly will be syntactically valid.
-                for c in 0..self.num_colours {
-                    if !assigned.values().any(|&ac| ac == c) {
-                        assigned.insert(idx, c);
-                        self.nodes[idx].colour = Some(c);
-                        result.insert(
-                            self.nodes[idx].name.clone(),
-                            self.phys_regs[c].to_string(),
-                        );
-                        break;
-                    }
-                }
-                // If all registers are taken, use the first one (severe
-                // interference).
-                if self.nodes[idx].colour.is_none() {
-                    assigned.insert(idx, 0);
-                    self.nodes[idx].colour = Some(0);
-                    result.insert(
-                        self.nodes[idx].name.clone(),
-                        self.phys_regs[0].to_string(),
-                    );
-                }
+                // Spill candidate — leave uncoloured.  insert_spill_code
+                // will emit loads/stores around defs and uses, and a
+                // subsequent iteration of allocate_registers will recolour.
             }
         }
 
@@ -667,59 +644,139 @@ fn try_merge_pair(first: &A64Op, second: &A64Op) -> Option<A64Op> {
 }
 
 // ---------------------------------------------------------------------------
-// Main entry: run register allocation on all functions
+// Spill code insertion
 // ---------------------------------------------------------------------------
 
-/// Assign physical registers and return updated functions.
-pub fn allocate_registers(functions: &mut [SelectedFunction]) {
-    for func in functions {
-        // Build interference graph.
-        let mut graph = InterferenceGraph::from_blocks(&func.blocks);
+/// Insert stack loads (Ldr) and stores (Str) for values that could not be
+/// coloured in the interference graph.
+///
+/// For each spilled value:
+///   - Allocate a stack slot at `frame_size - 16 * slot_index`
+///   - After the op that defines the value, insert a `Str` to the slot
+///   - Before each op that uses the value, insert a `Ldr` from the slot
+///   - Update `func.frame_size` to reflect the total spill area
+fn insert_spill_code(func: &mut SelectedFunction, spills: &[String], _assignment: &HashMap<String, String>) {
+    let mut slot_offset = func.frame_size;
 
-        // Colour the graph (Chaitin-Briggs).
-        let mut assignment = graph.colour();
+    for spill_name in spills {
+        slot_offset -= 16; // each spill slot is 16 bytes
 
-        // Coalesce (adjacent colour assignment for ldp/stp).
-        graph.coalesce_registers(&mut assignment);
-
-        // Pre-colour physical registers: every name that looks like a physical
-        // ARM64 register must map to itself so the allocator never reassigns them.
-        for (name, _) in assignment.clone().iter() {
-            if is_phys_reg(name) {
-                assignment.insert(name.clone(), name.clone());
-            }
-        }
-
-        // Rewrite every op to use physical register names.
         for block in &mut func.blocks {
-            for op in &mut block.ops {
-                rewrite_op(op, &assignment);
-            }
-
-            // Try to form LDP / STP pairs.
-            coalesce_ldp_stp(&mut block.ops);
-        }
-
-        // Collect which callee-saved registers (x19-x28) are used in the function.
-        let callee_saved = ["x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"];
-        let mut used: Vec<String> = Vec::new();
-        for block in &func.blocks {
+            let mut new_ops: Vec<A64Op> = Vec::new();
             for op in &block.ops {
-                let regs = all_regs_in_op(op);
-                for r in regs {
-                    if callee_saved.contains(&r.as_str()) && !used.contains(&r) {
-                        used.push(r);
-                    }
+                let used = op_uses(op);
+                let defined = op_defines(op);
+
+                // If this op uses the spilled value, load before the op.
+                if used.iter().any(|u| u == spill_name) {
+                    new_ops.push(A64Op::Ldr {
+                        rd: spill_name.clone(),
+                        addr: AddressingMode::BaseOffset("sp".to_string(), slot_offset),
+                        ty: "i64".to_string(),
+                    });
+                }
+
+                new_ops.push(op.clone());
+
+                // If this op defines the spilled value, store after the op.
+                if defined.as_ref() == Some(spill_name) {
+                    new_ops.push(A64Op::Str {
+                        rs: spill_name.clone(),
+                        addr: AddressingMode::BaseOffset("sp".to_string(), slot_offset),
+                        ty: "i64".to_string(),
+                    });
+                }
+            }
+            block.ops = new_ops;
+        }
+    }
+    func.frame_size = slot_offset.abs();
+}
+
+// ---------------------------------------------------------------------------
+// Callee-saved register collection helper
+// ---------------------------------------------------------------------------
+
+/// Collect the set of callee-saved registers (x19–x28) used across all ops.
+fn collect_callee_saved(func: &SelectedFunction) -> Vec<String> {
+    let callee_saved = ["x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"];
+    let mut used: Vec<String> = Vec::new();
+    for block in &func.blocks {
+        for op in &block.ops {
+            let regs = all_regs_in_op(op);
+            for r in regs {
+                if callee_saved.contains(&r.as_str()) && !used.contains(&r) {
+                    used.push(r);
                 }
             }
         }
-        // Sort by register number for deterministic stp pairing.
-        used.sort_by(|a, b| {
-            let an: u32 = a[1..].parse().unwrap_or(0);
-            let bn: u32 = b[1..].parse().unwrap_or(0);
-            an.cmp(&bn)
-        });
-        func.used_callee_saved = used;
+    }
+    used.sort_by(|a, b| {
+        let an: u32 = a[1..].parse().unwrap_or(0);
+        let bn: u32 = b[1..].parse().unwrap_or(0);
+        an.cmp(&bn)
+    });
+    used
+}
+
+// ---------------------------------------------------------------------------
+// Main entry: run register allocation on all functions
+// ---------------------------------------------------------------------------
+
+/// Assign physical registers, spilling to the stack when necessary.
+///
+/// Runs Chaitin-Briggs colouring iteratively: after each spilling pass,
+/// rebuilds the interference graph and recolours until every value gets a
+/// physical register (or the iteration limit is reached).
+pub fn allocate_registers(functions: &mut [SelectedFunction]) {
+    for func in functions {
+        let max_iterations = 10;
+        let mut iteration = 0;
+
+        loop {
+            iteration += 1;
+
+            // Build interference graph from current ops.
+            let mut graph = InterferenceGraph::from_blocks(&func.blocks);
+
+            // Colour the graph (Chaitin-Briggs).
+            let mut assignment = graph.colour();
+
+            // Coalesce (adjacent colour assignment for ldp/stp).
+            graph.coalesce_registers(&mut assignment);
+
+            // Pre-colour physical registers.
+            for (name, _) in assignment.clone().iter() {
+                if is_phys_reg(name) {
+                    assignment.insert(name.clone(), name.clone());
+                }
+            }
+
+            // Detect spill candidates: values defined by any op that have
+            // no colour assignment.
+            let spills: Vec<String> = func
+                .blocks
+                .iter()
+                .flat_map(|b| b.ops.iter())
+                .filter_map(|op| op_defines(op))
+                .filter(|d| !is_phys_reg(d) && !assignment.contains_key(d))
+                .collect();
+
+            if spills.is_empty() || iteration >= max_iterations {
+                // No more spills — apply assignment.
+                for block in &mut func.blocks {
+                    for op in &mut block.ops {
+                        rewrite_op(op, &assignment);
+                    }
+                    coalesce_ldp_stp(&mut block.ops);
+                }
+                func.used_callee_saved = collect_callee_saved(func);
+                break;
+            }
+
+            // Insert spill code for uncoloured values and loop again.
+            insert_spill_code(func, &spills, &assignment);
+        }
     }
 }
 
