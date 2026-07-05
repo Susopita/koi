@@ -2,7 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 const BIN: &str = env!("CARGO_BIN_EXE_koi");
+
+static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
@@ -31,10 +35,12 @@ fn run_pipeline(sample: &str) -> PathBuf {
     let root = workspace_root();
     let sample_path = root.join("test/casos_prueba_carp").join(sample);
 
+    let count = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     // Each test gets its own tempdir so output.s never races.
     let temp_dir = std::env::temp_dir().join(format!(
-        "koi-pipeline-test-{}-{}",
+        "koi-pipeline-test-{}-{}-{}",
         std::process::id(),
+        count,
         sample
     ));
     let _ = fs::remove_dir_all(&temp_dir);
