@@ -36,6 +36,10 @@ enum Commands {
         #[arg(long)]
         pretty: bool,
 
+        /// Skip borrow-checking — useful for testing / debugging.
+        #[arg(long)]
+        no_borrow_check: bool,
+
         /// Target architecture (x86_64, arm64, riscv).
         /// Defaults to x86_64.
         #[arg(long, default_value = "x86_64")]
@@ -53,6 +57,7 @@ fn main() {
             check,
             pretty,
             target,
+            no_borrow_check,
         } => {
             let arch = match koi::backend::TargetArch::from_str(target) {
                 Ok(a) => a,
@@ -78,7 +83,7 @@ fn main() {
                 BuildMode::Full
             };
 
-            let (result, diag) = koi::pipeline::run_pipeline(&input, file, mode, arch);
+            let (result, diag) = koi::pipeline::run_pipeline(&input, file, mode, arch, *no_borrow_check);
 
             match mode {
                 BuildMode::DumpAst | BuildMode::Check => {

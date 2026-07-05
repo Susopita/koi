@@ -56,6 +56,7 @@ pub fn run_pipeline(
     src_path: &PathBuf,
     mode: BuildMode,
     arch: TargetArch,
+    no_borrow_check: bool,
 ) -> (PipelineResult, DiagnosticBag) {
     let mut diag = DiagnosticBag::new(
         src_path.to_str().unwrap_or("<unknown>"),
@@ -78,16 +79,16 @@ pub fn run_pipeline(
         );
     }
 
-    // --- Stage 2: Middle-end ---
+    // --- Stage 2: Borrow check (only in Check / Full modes) ---
+    if !no_borrow_check {
+        run_borrow_check(input, &mut diag);
+    }
+
+    // --- Stage 3: Middle-end ---
     let ir = match run_middle_end(&ast, &mut diag) {
         Some(ir) => ir,
         None => return (emit_check_failure(&diag), diag),
     };
-
-    // --- Stage 3: Borrow check (only in Check / Full modes) ---
-    if let Err(e) = run_borrow_check(&ast) {
-        diag.push("borrow_check", "error", e);
-    }
 
     if mode == BuildMode::Check {
         return (
@@ -140,11 +141,40 @@ fn run_middle_end(program: &ASTNode, diag: &mut DiagnosticBag) -> Option<IRProgr
     }
 }
 
-fn run_borrow_check(program: &ASTNode) -> Result<(), String> {
-    // The borrow checker currently operates on TypedExpr.
-    // For now this is a pass-through — the full bridge is wired
-    // when the old AST → TypedAST → IR path is finalised.
-    Ok(())
+fn run_borrow_check(input: &str, diag: &mut DiagnosticBag) {
+    // Parse source to SExprs (reusing the reader stage).
+    let sexprs = match crate::frontend::sexpr::read_source(input) {
+        Ok(s) => s,
+        Err(e) => {
+            diag.push("borrow_check", "warning", format!("skipped (reader): {e}"));
+            return;
+        }
+    };
+
+    // Convert to typed AST (TopLevel with fresh type variables).
+    let mut toplevels = match crate::frontend::typed_ast::sexprs_to_toplevels(sexprs) {
+        Ok(t) => t,
+        Err(e) => {
+            diag.push("borrow_check", "warning", format!("skipped (typed AST): {e}"));
+            return;
+        }
+    };
+
+    // Run Hindley-Milner type inference to resolve all type variables.
+    let mut inferer = crate::frontend::type_inferer::TypeInferer::new();
+    if let Err(e) = inferer.infer_program(&mut toplevels) {
+        diag.push("borrow_check", "warning", format!("skipped (type inference): {e}"));
+        return;
+    }
+
+    // Run borrow checker on the fully typed program.
+    let mut bc = crate::frontend::borrow_checker::BorrowChecker::new();
+    bc.check_program(&toplevels);
+
+    // Forward any borrow-check errors to the diagnostic bag.
+    for err in &bc.errors {
+        diag.push("borrow_check", "error", err.clone());
+    }
 }
 
 fn run_backend(

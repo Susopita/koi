@@ -321,8 +321,13 @@ impl TypeInferer {
                 ty,
             } => {
                 let init_ty = self.infer_expr(init)?;
+
+                // Variable is visible in condition, step, and body.
+                let mut local_scope = HashMap::new();
+                local_scope.insert(variable.clone(), init_ty.clone());
+                self.scopes.push(local_scope);
+
                 let step_ty = self.infer_expr(step)?;
-                // The loop variable type = init type = step type.
                 self.constrain(
                     init_ty.clone(),
                     step_ty,
@@ -334,11 +339,8 @@ impl TypeInferer {
                 let cond_ty = self.infer_expr(condition)?;
                 self.constrain(cond_ty, Type::Bool, "loop condition", 0, 0);
 
-                // Variable is visible in body.
-                let mut local_scope = HashMap::new();
-                local_scope.insert(variable.clone(), init_ty);
-                self.scopes.push(local_scope);
                 self.infer_expr(body)?;
+
                 self.scopes.pop();
 
                 // Loop returns the final variable value.

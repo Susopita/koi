@@ -430,10 +430,11 @@ fn expr_from_sexpr(
                 }
 
                 SExpr::Symbol(s) if s == "loop" => {
-                    // (loop [var init cond step] body ...)
-                    // Simplified: multi-body is implicit do.
+                    // Support two loop syntaxes:
+                    //   Old: (loop [var init] cond step body)
+                    //   New: (loop [var init cond step] body)
                     if items.len() < 3 {
-                        return Err("loop: expected (loop [var init cond step] body)".to_string());
+                        return Err("loop: expected (loop header body)".to_string());
                     }
                     let loop_header = match &items[1] {
                         SExpr::List(h) => h,
@@ -441,18 +442,36 @@ fn expr_from_sexpr(
                             return Err(format!("loop: expected loop header list, got {other}"));
                         }
                     };
-                    if loop_header.len() != 4 {
+                    let (variable, init, condition, step, body) = if loop_header.len() == 4 {
+                        // New syntax: (loop [var init cond step] body)
+                        let variable =
+                            sym_str(&loop_header[0], "loop: variable must be a symbol")?;
+                        let init = expr_from_sexpr(&loop_header[1], struct_fields)?;
+                        let condition = expr_from_sexpr(&loop_header[2], struct_fields)?;
+                        let step = expr_from_sexpr(&loop_header[3], struct_fields)?;
+                        let body = expr_from_sexpr(&items[2], struct_fields)?;
+                        (variable, init, condition, step, body)
+                    } else if loop_header.len() == 2 {
+                        // Old syntax: (loop [var init] cond step body)
+                        if items.len() < 5 {
+                            return Err(format!(
+                                "loop: old syntax expects (loop [var init] cond step body), got {} forms",
+                                items.len() - 1
+                            ));
+                        }
+                        let variable =
+                            sym_str(&loop_header[0], "loop: variable must be a symbol")?;
+                        let init = expr_from_sexpr(&loop_header[1], struct_fields)?;
+                        let condition = expr_from_sexpr(&items[2], struct_fields)?;
+                        let step = expr_from_sexpr(&items[3], struct_fields)?;
+                        let body = expr_from_sexpr(&items[4], struct_fields)?;
+                        (variable, init, condition, step, body)
+                    } else {
                         return Err(format!(
-                            "loop: header must have 4 elements (var init cond step), got {}",
+                            "loop: header must have 4 elements (new syntax) or 2 (old syntax), got {}",
                             loop_header.len()
                         ));
-                    }
-                    let variable =
-                        sym_str(&loop_header[0], "loop: variable must be a symbol")?;
-                    let init = expr_from_sexpr(&loop_header[1], struct_fields)?;
-                    let condition = expr_from_sexpr(&loop_header[2], struct_fields)?;
-                    let step = expr_from_sexpr(&loop_header[3], struct_fields)?;
-                    let body = expr_from_sexpr(&items[2], struct_fields)?;
+                    };
                     let ret_ty = fresh();
                     Ok(TypedExpr::Loop {
                         variable,

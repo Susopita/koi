@@ -458,12 +458,17 @@ impl BorrowChecker {
         match expr {
             E::Int(..) | E::Float(..) | E::Bool(..) | E::Str(..) => {}
 
-            E::Var(name, _) => {
+            E::Var(name, ty) => {
                 match self.variables.get(name) {
                     Some(Ownership::Moved) => {
-                        self.errors.push(format!(
-                            "use of moved variable: '{name}' (use-after-move)"
-                        ));
+                        // Variables of Copy type (i64, f64, bool, string)
+                        // can be used after being logically "moved" — they
+                        // are implicitly copyable.
+                        if !is_copy_type(ty) {
+                            self.errors.push(format!(
+                                "use of moved variable: '{name}' (use-after-move)"
+                            ));
+                        }
                     }
                     Some(Ownership::MutBorrowed) => {
                         self.errors.push(format!(
@@ -868,6 +873,18 @@ impl BorrowChecker {
     }
 }
 
+/// Returns `true` for types that are implicitly Copy (scalar values).
+/// Variables of these types are never moved — they are always copied.
+fn is_copy_type(ty: &crate::middle_end::types::Type) -> bool {
+    matches!(
+        ty,
+        crate::middle_end::types::Type::Int64
+            | crate::middle_end::types::Type::Float64
+            | crate::middle_end::types::Type::Bool
+            | crate::middle_end::types::Type::String
+    )
+}
+
 /// Returns `true` for operator / builtin names that don't consume ownership
 /// of their arguments (they are Copy-like or borrow implicitly).
 fn is_primitive_op(name: &str) -> bool {
@@ -924,12 +941,14 @@ mod tests {
     #[test]
     fn user_fn_call_moves_argument() {
         // A non-primitive function call transfers ownership of its
-        // arguments. Using `x` after calling `(id x)` is use-after-move.
+        // arguments. Using `p` after calling `(id p)` is use-after-move.
+        // Use a struct type (which is non-Copy) to test ownership transfer.
         let bc = check(
-            "(defn id [x] x)
-             (defn test [x]
-               (id x)
-               x)",
+            "(defstruct Box [val i64])
+             (defn id [x :Box] x)
+             (defn test [p :Box]
+               (id p)
+               p)",
         );
         assert!(
             !bc.errors.is_empty(),
@@ -945,16 +964,24 @@ mod tests {
 
     #[test]
     fn let_binding_ownership_transfer() {
-        // `(let [b a] ...)` moves `a` into `b`. Using `a` after is an error.
+        // `(let [b p] ...)` moves `p` (a struct) into `b`. Using `p` after
+        // is an error because structs are non-Copy.
         let bc = check(
-            "(defn test [a]
-               (let [b a]
-                 (print b))
-               a)",
+            "(defstruct Box [val i64])
+             (defn test [p :Box]
+               (let [b p]
+                 (field b val))
+               (field p val))",
         );
         assert!(
             !bc.errors.is_empty(),
-            "expected error for using moved variable 'a', got none: {:?}",
+            "expected error for using moved variable 'p', got none: {:?}",
+            bc.errors
+        );
+        let combined = bc.errors.join(" ");
+        assert!(
+            combined.contains("moved") || combined.contains("use"),
+            "unexpected errors: {:?}",
             bc.errors
         );
     }
