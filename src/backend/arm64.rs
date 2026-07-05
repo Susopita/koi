@@ -27,9 +27,12 @@ impl TargetBackend for Backend {
         "arm64"
     }
 
-    fn generate_code(&self, program: &IRProgram) -> Result<String, CompileError> {
+    fn generate_code(&self, program: &IRProgram, no_optimize: bool) -> Result<String, CompileError> {
         let mut program = program.clone();
-        Optimizer::optimize_program(&mut program);
+
+        if !no_optimize {
+            Optimizer::optimize_program(&mut program);
+        }
 
         // Phase 1: Instruction selection (Maximal Munch + if-conversion).
         let mut selected = self::instruction_select::select_instructions(&program);
@@ -40,11 +43,18 @@ impl TargetBackend for Backend {
         // Phase 3: Register allocation (graph coloring + coalescing).
         self::register_allocator::allocate_registers(&mut selected);
 
-        // Phase 4: List scheduling (reorder ops to hide latencies).
-        self::scheduler::schedule_functions(&mut selected);
+        if !no_optimize {
+            // Phase 4: List scheduling (reorder ops to hide latencies).
+            self::scheduler::schedule_functions(&mut selected);
+        }
 
         // Phase 5: Emit assembly text.
         let asm = self::instruction_select::emit_assembly(&selected);
-        Ok(self::peephole::optimize(&asm))
+
+        if !no_optimize {
+            Ok(self::peephole::optimize(&asm))
+        } else {
+            Ok(asm)
+        }
     }
 }

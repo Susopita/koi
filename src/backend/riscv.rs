@@ -26,21 +26,31 @@ impl TargetBackend for Backend {
         "riscv"
     }
 
-    fn generate_code(&self, program: &IRProgram) -> Result<String, CompileError> {
+    fn generate_code(&self, program: &IRProgram, no_optimize: bool) -> Result<String, CompileError> {
         let mut program = program.clone();
-        Optimizer::optimize_program(&mut program);
+
+        if !no_optimize {
+            Optimizer::optimize_program(&mut program);
+        }
 
         // Phase 1: Instruction selection (Maximal Munch + constant folding).
         let mut selected = self::instruction_select::select_instructions(&program);
 
         // Phase 2: Post-selection optimisations (strength reduction, memory LVN).
-        self::optimizer::optimise_selected(&mut selected);
+        if !no_optimize {
+            self::optimizer::optimise_selected(&mut selected);
+        }
 
         // Phase 3: Register allocation + prologue/epilogue.
         self::regalloc::allocate_and_frame(&mut selected);
 
         // Phase 4: Emit assembly text.
         let asm = self::instruction_select::emit_assembly(&selected);
-        Ok(self::peephole::optimize(&asm))
+
+        if !no_optimize {
+            Ok(self::peephole::optimize(&asm))
+        } else {
+            Ok(asm)
+        }
     }
 }

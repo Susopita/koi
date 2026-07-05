@@ -73,7 +73,12 @@ pub trait TargetBackend {
     fn name(&self) -> &'static str;
 
     /// Translate an IR program into assembly text.
-    fn generate_code(&self, program: &IRProgram) -> Result<String, CompileError>;
+    ///
+    /// When `no_optimize` is true, the backend should skip optimisation
+    /// passes (IR-level optimiser, scheduler, peephole) but still perform
+    /// instruction selection, register allocation, and all other
+    /// correctness-required passes.
+    fn generate_code(&self, program: &IRProgram, no_optimize: bool) -> Result<String, CompileError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,8 +138,9 @@ impl CompileError {
 pub fn compile_ir_to_assembly(
     program: &IRProgram,
     arch: TargetArch,
+    no_optimize: bool,
 ) -> Result<String, CompileError> {
-    backend_for(arch).generate_code(program)
+    backend_for(arch).generate_code(program, no_optimize)
 }
 
 /// Compile from a JSON IR string into assembly for the given target.
@@ -147,5 +153,5 @@ pub fn compile_ir_json_to_assembly(ir_json: &str, arch: TargetArch) -> Result<St
             "IR program does not contain any functions",
         ));
     }
-    compile_ir_to_assembly(&program, arch)
+    compile_ir_to_assembly(&program, arch, false)
 }

@@ -24,12 +24,18 @@ impl TargetBackend for Backend {
         "x86_64"
     }
 
-    fn generate_code(&self, program: &IRProgram) -> Result<String, CompileError> {
+    fn generate_code(&self, program: &IRProgram, no_optimize: bool) -> Result<String, CompileError> {
         let mut program = program.clone();
-        Optimizer::optimize_program(&mut program);
+        if !no_optimize {
+            Optimizer::optimize_program(&mut program);
+        }
         let asm = X86Generator::new()
             .generate(&program)
             .map_err(|e| CompileError::new("codegen", e))?;
-        Ok(Peephole::optimize(&asm))
+        if !no_optimize {
+            Ok(Peephole::optimize(&asm))
+        } else {
+            Ok(asm)
+        }
     }
 }

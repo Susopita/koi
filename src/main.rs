@@ -36,9 +36,10 @@ enum Commands {
         #[arg(long)]
         pretty: bool,
 
-        /// Skip borrow-checking — useful for testing / debugging.
+        /// Skip optimisation passes (IR optimizer, scheduler, peephole).
+        /// Borrow checking and register allocation always run.
         #[arg(long)]
-        no_borrow_check: bool,
+        no_optimize: bool,
 
         /// Target architecture (x86_64, arm64, riscv).
         /// Defaults to x86_64.
@@ -57,7 +58,7 @@ fn main() {
             check,
             pretty,
             target,
-            no_borrow_check,
+            no_optimize,
         } => {
             let arch = match koi::backend::TargetArch::from_str(target) {
                 Ok(a) => a,
@@ -83,7 +84,7 @@ fn main() {
                 BuildMode::Full
             };
 
-            let (result, diag) = koi::pipeline::run_pipeline(&input, file, mode, arch, *no_borrow_check);
+            let (result, diag) = koi::pipeline::run_pipeline(&input, file, mode, arch, *no_optimize);
 
             match mode {
                 BuildMode::DumpAst | BuildMode::Check => {

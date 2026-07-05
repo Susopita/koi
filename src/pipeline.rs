@@ -56,7 +56,7 @@ pub fn run_pipeline(
     src_path: &PathBuf,
     mode: BuildMode,
     arch: TargetArch,
-    no_borrow_check: bool,
+    no_optimize: bool,
 ) -> (PipelineResult, DiagnosticBag) {
     let mut diag = DiagnosticBag::new(
         src_path.to_str().unwrap_or("<unknown>"),
@@ -79,10 +79,8 @@ pub fn run_pipeline(
         );
     }
 
-    // --- Stage 2: Borrow check (only in Check / Full modes) ---
-    if !no_borrow_check {
-        run_borrow_check(input, &mut diag);
-    }
+    // --- Stage 2: Borrow check (always on) ---
+    run_borrow_check(input, &mut diag);
 
     // --- Stage 3: Middle-end ---
     let ir = match run_middle_end(&ast, &mut diag) {
@@ -98,7 +96,7 @@ pub fn run_pipeline(
     }
 
     // --- Stage 4: Backend ---
-    match run_backend(ir, src_path, &mut diag, arch) {
+    match run_backend(ir, src_path, &mut diag, arch, no_optimize) {
         Ok(()) => (PipelineResult::None, diag),
         Err(()) => (PipelineResult::None, diag),
     }
@@ -182,8 +180,9 @@ fn run_backend(
     src_path: &Path,
     diag: &mut DiagnosticBag,
     arch: TargetArch,
+    no_optimize: bool,
 ) -> Result<(), ()> {
-    let assembly = match crate::backend::compile_ir_to_assembly(&program, arch) {
+    let assembly = match crate::backend::compile_ir_to_assembly(&program, arch, no_optimize) {
         Ok(a) => a,
         Err(e) => {
             diag.push("codegen", "error", e.message);
