@@ -456,6 +456,21 @@ enum TerminatorInfo {
 }
 
 fn select_function(func: &IRFunction, _program: &IRProgram) -> SelectedFunction {
+    // Intentar if-conversion primero (transforma Branch→bloques→Phi
+    // en CSEL/CSINC, eliminando el branch y linearizando el flujo).
+    if let Some(converted) = try_if_conversion_function(func) {
+        let frame_size = 0;
+        let parameters = func.parameters.iter().map(|(n, _)| n.clone()).collect();
+        return SelectedFunction {
+            name: func.name.clone(),
+            blocks: converted,
+            frame_size,
+            parameters,
+            used_callee_saved: Vec::new(),
+        };
+    }
+
+    // Fallback: selección normal per-bloque
     let mut blocks: Vec<SelectedBlock> = func
         .blocks
         .iter()

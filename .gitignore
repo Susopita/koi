@@ -1,4 +1,5 @@
 /target
 .commandcode/
 shell.nix
-
+ROADMAP.md
+TASKS.md

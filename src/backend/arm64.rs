@@ -13,7 +13,6 @@ use crate::backend::optimizer::Optimizer;
 use self::instruction_select::{select_instructions, emit_assembly};
 use self::materializer::materialize_constants;
 use self::register_allocator::allocate_registers;
-use self::scheduler::schedule_functions;
 
 /// ARM64 code generation backend.
 pub struct Backend;
@@ -42,7 +41,10 @@ impl TargetBackend for Backend {
         // Phase 3: Register allocation (graph coloring + coalescing).
         self::register_allocator::allocate_registers(&mut selected);
 
-        // Phase 4: Emit assembly text.
+        // Phase 4: List scheduling (reorder ops to hide latencies).
+        self::scheduler::schedule_functions(&mut selected);
+
+        // Phase 5: Emit assembly text.
         let asm = self::instruction_select::emit_assembly(&selected);
         Ok(self::peephole::optimize(&asm))
     }

@@ -22,7 +22,7 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use crate::backend::arm64::instruction_select::{A64Op, SelectedBlock, SelectedFunction};
+use crate::backend::arm64::instruction_select::{A64Op, SelectedFunction};
 
 // ---------------------------------------------------------------------------
 // DAG types
@@ -32,7 +32,7 @@ use crate::backend::arm64::instruction_select::{A64Op, SelectedBlock, SelectedFu
 #[derive(Debug, Clone)]
 struct DagNode {
     /// Index in the original instruction list.
-    index: usize,
+    _index: usize,
     /// The operation itself (borrowed for analysis, not stored here).
     /// Latency of this instruction — cycles until its result is ready.
     latency: u32,
@@ -61,7 +61,7 @@ pub fn schedule_block(ops: &[A64Op]) -> Vec<A64Op> {
     let n = ops.len();
     let mut nodes: Vec<DagNode> = (0..n)
         .map(|i| DagNode {
-            index: i,
+            _index: i,
             latency: op_latency(&ops[i]),
             preds: Vec::new(),
             succs: Vec::new(),
@@ -205,7 +205,7 @@ impl PartialOrd for PriorityNode {
 // Helper: add a dependence edge
 // ---------------------------------------------------------------------------
 
-fn add_edge(nodes: &mut Vec<DagNode>, from: usize, to: usize, kind: &str) {
+fn add_edge(nodes: &mut Vec<DagNode>, from: usize, to: usize, _kind: &str) {
     // Avoid duplicate edges (common when a node reads the same reg twice).
     if nodes[to].preds.contains(&from) {
         return;
@@ -247,12 +247,15 @@ fn op_uses(op: &A64Op) -> Vec<String> {
         }
         // Chain all control-flow ops (branches, calls, returns) so the
         // scheduler cannot reorder them past each other.
-        A64Op::B { .. } | A64Op::Bl { .. } | A64Op::Blr { .. } | A64Op::Ret => {
+        A64Op::B { .. } | A64Op::Bl { .. } | A64Op::Ret => {
             vec!["ctrl".to_string()]
+        }
+        A64Op::Blr { reg } => {
+            let mut v = vec!["ctrl".to_string(), reg.clone()];
+            v
         }
         A64Op::PrintI64Arg { reg } | A64Op::PrintStringArg { reg } => vec![reg.clone()],
         A64Op::MovReg { rm, .. } => vec![rm.clone()],
-        A64Op::Blr { reg } => vec![reg.clone()],
         A64Op::Str { rs, addr, .. } | A64Op::StrFloat { rs, addr } => {
             let mut v = vec![rs.clone()];
             addr_uses(&mut v, addr);
