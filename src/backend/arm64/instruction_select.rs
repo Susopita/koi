@@ -568,7 +568,7 @@ fn select_block(block: &BasicBlock, _func: &IRFunction) -> SelectedBlock {
     while i < block.instructions.len() {
         let instr = &block.instructions[i];
         let consumed =
-            munch_instruction(instr, &block.instructions[i..], &mut ops, &shift_map);
+            munch_instruction(instr, &block.instructions[i..], &mut ops, &shift_map, &value_map);
         i += consumed.max(1);
     }
 
@@ -741,8 +741,9 @@ pub fn try_if_conversion_function(func: &IRFunction) -> Option<Vec<SelectedBlock
             .filter(|instr| !matches!(instr, Instruction::Phi { .. }))
             .collect();
         let empty_map = std::collections::HashMap::new();
+        let empty_valmap = std::collections::HashMap::new();
         for instr in &non_phi {
-            munch_instruction(instr, &[], &mut ops, &empty_map);
+            munch_instruction(instr, &[], &mut ops, &empty_map, &empty_valmap);
         }
 
         let mut result = Vec::new();
@@ -803,6 +804,7 @@ fn munch_instruction(
     _suffix: &[Instruction],
     ops: &mut Vec<A64Op>,
     shift_map: &std::collections::HashMap<String, (String, ShiftKind, u8)>,
+    value_map: &std::collections::HashMap<String, i64>,
 ) -> usize {
     match instr {
         Instruction::Const { result, value, ty } => {
@@ -903,7 +905,7 @@ fn munch_instruction(
                     // Multiplication by constant small power of two
                     // can be strength-reduced to a shift during
                     // instruction selection.
-                    if let Some(shift) = is_power_of_two_shift(rhs) {
+                    if let Some(shift) = is_power_of_two_shift(rhs, value_map) {
                         if shift > 0 {
                             ops.push(A64Op::Lsl {
                                 rd: result.clone(),
@@ -918,7 +920,7 @@ fn munch_instruction(
                                 rm: lhs.clone(),
                             });
                         }
-                    } else if let Some(shift) = is_power_of_two_shift(lhs) {
+                    } else if let Some(shift) = is_power_of_two_shift(lhs, value_map) {
                         if shift > 0 {
                             ops.push(A64Op::Lsl {
                                 rd: result.clone(),
@@ -1680,8 +1682,14 @@ fn binop_cond_to_arm64(op: &str) -> String {
     }
 }
 
-/// If `name` is a constant that is a power of two, return the shift amount.
-fn is_power_of_two_shift(_name: &str) -> Option<u8> {
+/// If `name` maps to a constant in `value_map` that is a positive power of two,
+/// return the shift amount (log2 of the value).  Used by `*` strength-reduction.
+fn is_power_of_two_shift(name: &str, value_map: &std::collections::HashMap<String, i64>) -> Option<u8> {
+    if let Some(&val) = value_map.get(name) {
+        if val > 0 && (val as u64).is_power_of_two() {
+            return Some(val.trailing_zeros() as u8);
+        }
+    }
     None
 }
 
