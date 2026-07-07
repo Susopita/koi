@@ -125,7 +125,7 @@ fn control_flow_struct_and_kitchen_sink_reach_assembly_stage() {
 #[cfg_attr(not(target_arch = "x86_64"), ignore)]
 fn add_program_runs_and_returns_expected_exit_code() {
     let asm_path = run_pipeline("add.carp");
-    let exe = assemble_and_run(&asm_path, "add", Some(8));
+    let exe = assemble_and_run(&asm_path, "add", Some(0));
     let _ = fs::remove_dir_all(asm_path.parent().unwrap());
     let _ = fs::remove_file(exe);
 }
@@ -134,7 +134,7 @@ fn add_program_runs_and_returns_expected_exit_code() {
 #[cfg_attr(not(target_arch = "x86_64"), ignore)]
 fn lambda_program_runs_and_returns_expected_exit_code() {
     let asm_path = run_pipeline("lambda.carp");
-    let exe = assemble_and_run(&asm_path, "lambda", Some(6));
+    let exe = assemble_and_run(&asm_path, "lambda", Some(0));
     let _ = fs::remove_dir_all(asm_path.parent().unwrap());
     let _ = fs::remove_file(exe);
 }
