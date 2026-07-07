@@ -1,0 +1,20 @@
+; ============================================================
+; 06_mutual_recursion.carp
+; Recursión mutua: even/odd
+; Salida esperada (exit code): 1  (is-even 8 → true → 1)
+;
+;   is-even llama a is-odd y viceversa.
+; ============================================================
+
+(defn is-even [n]
+  (if (<= n 0)
+    1
+    (is-odd (- n 1))))
+
+(defn is-odd [n]
+  (if (<= n 0)
+    0
+    (is-even (- n 1))))
+
+(defn main []
+  (is-even 8))

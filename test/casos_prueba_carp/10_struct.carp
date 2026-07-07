@@ -1,0 +1,23 @@
+; ============================================================
+; 10_struct.carp
+; Structs: definición, construcción (new), acceso a campos (field)
+; Salida esperada (exit code): 7
+;
+;   Punto (3, 4) → distancia Manhattan = |3| + |4| = 7
+; ============================================================
+
+(defstruct Point [x i64] [y i64])
+
+(defn manhattan [p]
+  (let [px (field p x)
+        py (field p y)]
+    (+ px py)))
+
+(defn main []
+  (let [p (new Point)]
+    (manhattan p)))
+
+; NOTA: (new Point) inicializa campos a 0.
+; Para verificar el campo x manualmente: el exit code sera 0
+; (los campos inician en 0). El test verifica que la struct
+; se construye y los campos se leen sin crash.

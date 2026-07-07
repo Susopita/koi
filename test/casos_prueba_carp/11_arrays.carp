@@ -1,0 +1,14 @@
+; ============================================================
+; 11_arrays.carp
+; Arrays: literal [a b c], indexación (index)
+; Salida esperada (exit code): 30
+;
+;   arr = [10, 20, 30]
+;   arr[2] = 30
+; ============================================================
+
+(defn third-element [arr]
+  (index arr 2))
+
+(defn main []
+  (third-element [10 20 30]))

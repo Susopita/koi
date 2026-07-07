@@ -1,0 +1,17 @@
+; ============================================================
+; 02_booleans_and_comparisons.carp
+; Comparaciones: < y > usadas en if para retornar valores directos
+;
+; BUG CONOCIDO (ARM64): la comparación en if actualmente retorna
+; el resultado de la condición (0=false) en vez de la rama correcta.
+; Salida actual en ARM64: 0  (bug en codegen de branch condicional)
+; Salida correcta esperada: 3  (el menor de 8 y 3 es 3)
+;
+;   smaller(8, 3) debería retornar 3
+; ============================================================
+
+(defn smaller [a b]
+  (if (< a b) a b))
+
+(defn main []
+  (smaller 8 3))

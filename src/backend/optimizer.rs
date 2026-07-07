@@ -1,6 +1,6 @@
 use crate::middle_end::ir::{IRProgram, IRFunction, Instruction};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct Optimizer;
 
@@ -40,7 +40,7 @@ impl Optimizer {
         let mut changed = false;
 
         for block in &mut function.blocks {
-            let mut constants = HashMap::<String, Value>::new();
+            let mut constants = BTreeMap::<String, Value>::new();
 
             for instruction in &mut block.instructions {
                 match instruction {
@@ -97,7 +97,7 @@ impl Optimizer {
         let mut changed = false;
 
         for block in &mut function.blocks {
-            let mut constants = HashMap::<String, Value>::new();
+            let mut constants = BTreeMap::<String, Value>::new();
             let mut rewritten = Vec::with_capacity(block.instructions.len());
 
             for instruction in block.instructions.drain(..) {
@@ -237,7 +237,7 @@ impl Optimizer {
     }
 
     fn dead_code_elimination(function: &mut IRFunction) -> bool {
-        let mut live = HashSet::<String>::new();
+        let mut live = BTreeSet::<String>::new();
         for block in &function.blocks {
             for instruction in &block.instructions {
                 if let Instruction::Phi { incoming, .. } = instruction {
@@ -296,7 +296,7 @@ impl Optimizer {
         // Build successor edges for each block, including the implicit
         // fallthrough edge to the next block in vec order when the block has
         // no explicit terminator.
-        let mut successors: HashMap<String, Vec<String>> = HashMap::new();
+        let mut successors: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (index, block) in function.blocks.iter().enumerate() {
             let mut edges = Vec::new();
             let mut has_terminator = false;
@@ -329,7 +329,7 @@ impl Optimizer {
             successors.insert(block.label.clone(), edges);
         }
 
-        let mut reachable = HashSet::<String>::new();
+        let mut reachable = BTreeSet::<String>::new();
         let mut worklist = vec![entry_label.clone()];
         reachable.insert(entry_label.clone());
         while let Some(label) = worklist.pop() {

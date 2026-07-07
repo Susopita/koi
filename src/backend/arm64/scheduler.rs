@@ -20,7 +20,7 @@
 //! | Mov wide (`movz`, `movk`, `movreg`) | 1 | I0 |
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, BTreeMap, HashSet};
 
 use crate::backend::arm64::instruction_select::{A64Op, SelectedFunction};
 
@@ -84,8 +84,8 @@ pub fn schedule_block(ops: &[A64Op]) -> Vec<A64Op> {
         })
         .collect();
 
-    let mut last_write: HashMap<String, usize> = HashMap::new();
-    let mut last_read: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut last_write: BTreeMap<String, usize> = BTreeMap::new();
+    let mut last_read: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
     for i in 0..n {
         let defs = op_defines(non_terms[i]);
@@ -254,29 +254,43 @@ fn op_uses(op: &A64Op) -> Vec<String> {
         }
         // Chain all control-flow ops (branches, calls, returns) so the
         // scheduler cannot reorder them past each other.
-        A64Op::B { .. } | A64Op::Bl { .. } | A64Op::Ret => {
+        A64Op::B { .. } | A64Op::Ret => {
             vec!["ctrl".to_string()]
         }
+        A64Op::Bl { .. } => {
+            // Bl implicitly uses all argument registers (x0-x7) and memory
+            // (callee may read through any pointer), so stores before the
+            // call are not reordered past it.
+            vec!["ctrl".to_string(), "mem".to_string(),
+                 "x0".to_string(), "x1".to_string(),
+                 "x2".to_string(), "x3".to_string(),
+                 "x4".to_string(), "x5".to_string(),
+                 "x6".to_string(), "x7".to_string()]
+        }
         A64Op::Blr { reg } => {
-            let v = vec!["ctrl".to_string(), reg.clone()];
+            let v = vec!["ctrl".to_string(), "mem".to_string(),
+                         "x0".to_string(), "x1".to_string(),
+                         "x2".to_string(), "x3".to_string(),
+                         "x4".to_string(), "x5".to_string(),
+                         "x6".to_string(), "x7".to_string(), reg.clone()];
             v
         }
         A64Op::PrintI64Arg { reg } | A64Op::PrintStringArg { reg } | A64Op::PrintF64Arg { reg } => {
-            vec!["ctrl".to_string(), reg.clone()]
+            vec!["ctrl".to_string(), "mem".to_string(), reg.clone()]
         }
         A64Op::MovReg { rm, .. } => vec![rm.clone()],
         A64Op::Str { rs, addr, .. } | A64Op::StrFloat { rs, addr } => {
-            let mut v = vec![rs.clone()];
+            let mut v = vec!["mem".to_string(), rs.clone()];
             addr_uses(&mut v, addr);
             v
         }
         A64Op::Stp { rt1, rt2, addr, .. } => {
-            let mut v = vec![rt1.clone(), rt2.clone()];
+            let mut v = vec!["mem".to_string(), rt1.clone(), rt2.clone()];
             addr_uses(&mut v, addr);
             v
         }
         A64Op::Strb { rs, addr } => {
-            let mut v = vec![rs.clone()];
+            let mut v = vec!["mem".to_string(), rs.clone()];
             addr_uses(&mut v, addr);
             v
         }
@@ -284,21 +298,30 @@ fn op_uses(op: &A64Op) -> Vec<String> {
         | A64Op::Ldrb { addr, .. }
         | A64Op::Ldrsw { addr, .. }
         | A64Op::LdrFloat { addr, .. } => {
-            let mut v = vec![];
+            let mut v = vec!["mem".to_string()];
             addr_uses(&mut v, addr);
             v
         }
         A64Op::Ldp { addr, .. } => {
-            let mut v = vec![];
+            let mut v = vec!["mem".to_string()];
             addr_uses(&mut v, addr);
             v
         }
+        // Float scratch ops (using d0/d1) are serialised via "fpu" resource
+        // to prevent the scheduler from reordering them.
         A64Op::FAdd { rn, rm, .. }
         | A64Op::FSub { rn, rm, .. }
         | A64Op::FMul { rn, rm, .. }
-        | A64Op::FDiv { rn, rm, .. } => vec![rn.clone(), rm.clone()],
-        A64Op::FCmp { rn, rm } => vec![rn.clone(), rm.clone()],
-        A64Op::FMov { rm, .. } => vec![rm.clone()],
+        | A64Op::FDiv { rn, rm, .. } => vec![rn.clone(), rm.clone(), "fpu".to_string()],
+        A64Op::FCmp { rn, rm } => vec![rn.clone(), rm.clone(), "fpu".to_string()],
+        A64Op::FMov { rd, rm } => {
+            let mut v = vec![rm.clone()];
+            if rd == "d0" || rd == "d1" || rm == "d0" || rm == "d1" {
+                v.push("fpu".to_string());
+            }
+            v
+        }
+        A64Op::AddrOf { rn, .. } => vec![rn.clone()],
         _ => vec![],
     }
 }
@@ -323,31 +346,41 @@ fn op_defines(op: &A64Op) -> Vec<String> {
         | A64Op::Csel { rd, .. }
         | A64Op::Csinc { rd, .. }
         | A64Op::Cset { rd, .. }
-        | A64Op::Ldr { rd, .. }
-        | A64Op::Ldrb { rd, .. }
-        | A64Op::Ldrsw { rd, .. }
-        | A64Op::LdrFloat { rd, .. }
         | A64Op::Movz { rd, .. }
         | A64Op::Movk { rd, .. }
-        | A64Op::FAdd { rd, .. }
-        | A64Op::FSub { rd, .. }
-        | A64Op::FMul { rd, .. }
-        | A64Op::FDiv { rd, .. }
-        | A64Op::FMov { rd, .. }
         | A64Op::FMovImm { rd, .. }
-        | A64Op::LoadString { rd, .. } => vec![rd.clone()],
-        A64Op::Ldp { rt1, rt2, .. } => vec![rt1.clone(), rt2.clone()],
+        | A64Op::LoadString { rd, .. }
+        | A64Op::LoadFuncAddr { rd, .. }
+        | A64Op::AddrOf { rd, .. }
+        | A64Op::LoadFloat { rd, .. } => vec![rd.clone()],
+        // Loads define both the destination register AND "mem" (to serialize
+        // with stores). Stores define only "mem".
+        A64Op::Ldr { rd, .. } | A64Op::Ldrb { rd, .. } | A64Op::Ldrsw { rd, .. }
+        | A64Op::LdrFloat { rd, .. } => vec![rd.clone(), "mem".to_string()],
+        A64Op::Ldp { rt1, rt2, .. } => vec![rt1.clone(), rt2.clone(), "mem".to_string()],
+        A64Op::Str { .. } | A64Op::Stp { .. } | A64Op::Strb { .. } | A64Op::StrFloat { .. } => {
+            vec!["mem".to_string()]
+        }
+        // Float scratch ops also define "fpu" to prevent reordering.
+        A64Op::FAdd { rd, .. } | A64Op::FSub { rd, .. } | A64Op::FMul { rd, .. }
+        | A64Op::FDiv { rd, .. } | A64Op::FMov { rd, .. } => {
+            vec!["fpu".to_string(), rd.clone()]
+        }
+        A64Op::FCmp { .. } => vec!["fpu".to_string(), "nzcv".to_string()],
         A64Op::Cmp { .. } | A64Op::CmpImm { .. } | A64Op::FCmp { .. } => vec!["nzcv".to_string()],
         // Chain control-flow ops to prevent reordering across them.
         // Calls define both control (for ordering) and x0 (return value
         // register), so the scheduler knows argument MovReg instructions
         // cannot be moved past the call.
         A64Op::Bl { .. } | A64Op::Blr { .. } => {
-            vec!["ctrl".to_string(), "x0".to_string()]
+            vec!["ctrl".to_string(), "x0".to_string(), "mem".to_string()]
         }
-        A64Op::B { .. } | A64Op::BCond { .. } | A64Op::Ret
-        | A64Op::PrintI64Arg { .. } | A64Op::PrintStringArg { .. } | A64Op::PrintF64Arg { .. } => {
+        A64Op::B { .. } | A64Op::BCond { .. } | A64Op::Ret => {
             vec!["ctrl".to_string()]
+        }
+        // Print pseudo-ops emit inline str/bl that touch memory.
+        A64Op::PrintI64Arg { .. } | A64Op::PrintStringArg { .. } | A64Op::PrintF64Arg { .. } => {
+            vec!["ctrl".to_string(), "mem".to_string()]
         }
         _ => vec![],
     }
@@ -453,6 +486,9 @@ fn op_latency(op: &A64Op) -> u32 {
         // Print ops
         A64Op::PrintI64Arg { .. } | A64Op::PrintStringArg { .. } | A64Op::PrintF64Arg { .. } => 1,
         A64Op::LoadString { .. } => 1,
+        A64Op::LoadFuncAddr { .. } => 2,
+        A64Op::AddrOf { .. } => 1,
+        A64Op::LoadFloat { .. } => 4,
     }
 }
 

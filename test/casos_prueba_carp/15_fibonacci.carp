@@ -1,0 +1,15 @@
+; ============================================================
+; 15_fibonacci.carp
+; Fibonacci recursivo clásico
+; Salida esperada (exit code): 55
+;
+;   fib(10) = 55
+; ============================================================
+
+(defn fib [n]
+  (if (<= n 1)
+    n
+    (+ (fib (- n 1)) (fib (- n 2)))))
+
+(defn main []
+  (fib 10))

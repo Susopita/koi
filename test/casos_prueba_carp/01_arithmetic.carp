@@ -1,0 +1,21 @@
+; ============================================================
+; 01_arithmetic.carp
+; Aritmética básica: +, -, *, / entre enteros i64
+; Salida esperada (exit code): 42
+;
+;   a = 10, b = 4
+;   resultado = ((a + b) * (a - b)) / (b - 2)
+;             = (14 * 6) / 2
+;             = 84 / 2
+;             = 42
+; ============================================================
+
+(defn compute [a b]
+  (let [suma (+ a b)
+        diff (- a b)
+        prod (* suma diff)
+        div  (- b 2)]
+    (/ prod div)))
+
+(defn main []
+  (compute 10 4))

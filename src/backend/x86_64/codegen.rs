@@ -2,7 +2,7 @@ use crate::backend::x86_64::abi::AMD64ABI;
 use crate::backend::x86_64::register_allocator::{FunctionLayout, LinearScanAllocator, ValueLocation};
 use crate::middle_end::ir::{BasicBlock, IRFunction, IRProgram, Instruction};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
 struct EdgeMove {
@@ -23,7 +23,7 @@ pub struct X86Generator {
     // dedup lookup).
     float_literals: BTreeMap<String, String>,
     next_float_id: usize,
-    user_functions: HashSet<String>,
+    user_functions: BTreeSet<String>,
 }
 
 impl X86Generator {
@@ -35,7 +35,7 @@ impl X86Generator {
             next_string_id: 0,
             float_literals: BTreeMap::new(),
             next_float_id: 0,
-            user_functions: HashSet::new(),
+            user_functions: BTreeSet::new(),
         }
     }
 
@@ -102,7 +102,7 @@ impl X86Generator {
         layouts: &Layouts,
     ) -> Result<(), String> {
         let phi_moves = build_phi_moves(function);
-        let blocks_by_label: HashMap<&str, &BasicBlock> = function
+        let blocks_by_label: BTreeMap<&str, &BasicBlock> = function
             .blocks
             .iter()
             .map(|block| (block.label.as_str(), block))
@@ -141,7 +141,9 @@ impl X86Generator {
                         self.emit_branch(function, block, cond, true_label, false_label, &phi_moves, layout)?;
                     }
                     Instruction::Return { value } => {
-                        if let Some(value) = value {
+                        if function.name == "main" {
+                            self.emit_instr("xorq", &[AMD64ABI::RETURN_REGISTER, AMD64ABI::RETURN_REGISTER]);
+                        } else if let Some(value) = value {
                             if layout.value_types.get(value).map(String::as_str) == Some("f64") {
                                 self.load_float_named_value(layout, value, AMD64ABI::FLOAT_RETURN_REGISTER)?;
                             } else {
@@ -220,7 +222,7 @@ impl X86Generator {
         cond: &str,
         true_label: &str,
         false_label: &str,
-        phi_moves: &HashMap<(String, String), Vec<EdgeMove>>,
+        phi_moves: &BTreeMap<(String, String), Vec<EdgeMove>>,
         layout: &FunctionLayout,
     ) -> Result<(), String> {
         self.load_named_value(layout, cond, AMD64ABI::SCRATCH2)?;
@@ -252,7 +254,7 @@ impl X86Generator {
         _function: &IRFunction,
         block: &BasicBlock,
         successor: &str,
-        phi_moves: &HashMap<(String, String), Vec<EdgeMove>>,
+        phi_moves: &BTreeMap<(String, String), Vec<EdgeMove>>,
         layout: &FunctionLayout,
     ) -> Result<(), String> {
         let Some(moves) = phi_moves.get(&(block.label.clone(), successor.to_string())) else {
@@ -273,7 +275,7 @@ impl X86Generator {
             .collect();
 
         while !pending.is_empty() {
-            let source_names: HashSet<String> = pending.iter().map(|edge_move| edge_move.src.clone()).collect();
+            let source_names: BTreeSet<String> = pending.iter().map(|edge_move| edge_move.src.clone()).collect();
             if let Some(index) = pending.iter().position(|edge_move| !source_names.contains(&edge_move.dst)) {
                 let edge_move = pending.remove(index);
                 self.move_named_value(layout, &edge_move.src, &edge_move.dst)?;
@@ -1037,7 +1039,7 @@ fn layout_home<'a>(layout: &'a FunctionLayout, name: &str) -> Result<&'a ValueLo
 
 fn next_block<'a>(
     function: &'a IRFunction,
-    _blocks_by_label: &HashMap<&'a str, &'a BasicBlock>,
+    _blocks_by_label: &BTreeMap<&'a str, &'a BasicBlock>,
     current: &'a BasicBlock,
 ) -> Option<&'a BasicBlock> {
     let mut iter = function.blocks.iter();
@@ -1049,8 +1051,8 @@ fn next_block<'a>(
     None
 }
 
-fn build_phi_moves(function: &IRFunction) -> HashMap<(String, String), Vec<EdgeMove>> {
-    let mut moves = HashMap::<(String, String), Vec<EdgeMove>>::new();
+fn build_phi_moves(function: &IRFunction) -> BTreeMap<(String, String), Vec<EdgeMove>> {
+    let mut moves = BTreeMap::<(String, String), Vec<EdgeMove>>::new();
     for block in &function.blocks {
         for instruction in &block.instructions {
             if let Instruction::Phi { result, incoming, .. } = instruction {
@@ -1071,8 +1073,8 @@ fn build_phi_moves(function: &IRFunction) -> HashMap<(String, String), Vec<EdgeM
 
 #[derive(Debug, Clone, Default)]
 struct Layouts {
-    field_offsets: HashMap<(String, String), i64>,
-    struct_sizes: HashMap<String, i64>,
+    field_offsets: BTreeMap<(String, String), i64>,
+    struct_sizes: BTreeMap<String, i64>,
 }
 
 impl Layouts {
@@ -1146,8 +1148,8 @@ impl Layouts {
     }
 }
 
-fn collect_value_types(function: &IRFunction) -> HashMap<String, String> {
-    let mut value_types = HashMap::new();
+fn collect_value_types(function: &IRFunction) -> BTreeMap<String, String> {
+    let mut value_types = BTreeMap::new();
     for (name, ty) in &function.parameters {
         value_types.insert(name.clone(), ty.clone());
     }

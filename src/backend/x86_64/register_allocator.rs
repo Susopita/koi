@@ -15,7 +15,7 @@
 
 use crate::backend::x86_64::abi::AMD64ABI;
 use crate::middle_end::ir::{IRFunction, Instruction};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
 // Physical register pool
@@ -73,11 +73,11 @@ pub struct LiveInterval {
 #[derive(Debug, Clone)]
 pub struct FunctionLayout {
     /// The assigned location for every SSA value and parameter.
-    pub locations: HashMap<String, ValueLocation>,
+    pub locations: BTreeMap<String, ValueLocation>,
     /// The type string for every value (used by codegen to pick int/float
     /// instructions — note that this allocator handles GP registers only;
     /// float values currently stay stack-allocated).
-    pub value_types: HashMap<String, String>,
+    pub value_types: BTreeMap<String, String>,
     /// Total stack frame size (aligned to 16 bytes) consumed by spills.
     pub stack_size: i64,
     /// Set of callee-saved registers that this function actually uses;
@@ -99,7 +99,7 @@ impl LinearScanAllocator {
     /// Allocate registers for a single function body.
     pub fn allocate(&self, function: &IRFunction) -> FunctionLayout {
         let intervals = self.compute_live_intervals(function);
-        let mut value_types = HashMap::new();
+        let mut value_types = BTreeMap::new();
 
         // Collect type information from parameters and instructions.
         for (name, ty) in &function.parameters {
@@ -119,7 +119,7 @@ impl LinearScanAllocator {
         let mut active: Vec<LiveInterval> = Vec::new(); // intervals currently live
         let mut free_regs: Vec<bool> = vec![true; NUM_GPR];
         let mut next_stack = -8i64;
-        let mut locations: HashMap<String, ValueLocation> = HashMap::new();
+        let mut locations: BTreeMap<String, ValueLocation> = BTreeMap::new();
         let mut used_callee_saved: Vec<String> = Vec::new();
 
         // Pre-assign parameter homes (they live at the top of the stack
@@ -137,7 +137,7 @@ impl LinearScanAllocator {
         // Pre-assign a stack slot for every non-register value so we
         // always have a spill location.  This simplifies spilling during
         // allocation.
-        let mut spill_slots: HashMap<String, i64> = HashMap::new();
+        let mut spill_slots: BTreeMap<String, i64> = BTreeMap::new();
         for interval in &intervals {
             if !spill_slots.contains_key(&interval.var) {
                 spill_slots.insert(interval.var.clone(), next_stack);
@@ -234,8 +234,8 @@ impl LinearScanAllocator {
     // ------------------------------------------------------------------
 
     pub fn compute_live_intervals(&self, function: &IRFunction) -> Vec<LiveInterval> {
-        let mut starts = HashMap::<String, usize>::new();
-        let mut ends = HashMap::<String, usize>::new();
+        let mut starts = BTreeMap::<String, usize>::new();
+        let mut ends = BTreeMap::<String, usize>::new();
         let mut position = 0usize;
 
         // Parameters are "defined" at position 0 and "used" at the point

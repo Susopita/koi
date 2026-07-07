@@ -1,0 +1,24 @@
+; ============================================================
+; 08_higher_order.carp
+; Funciones de orden superior: pasar función nombrada como argumento
+; Salida esperada (exit code): 25
+;
+;   apply-fn(double, 12) = double(12) = 24
+;   apply-fn(inc-one, 24) = inc-one(24) = 25
+;   Composed: apply-fn(inc-one, apply-fn(double, 12)) = 25
+;
+; NOTA: en ARM64 las llamadas indirectas (call_indirect) están
+; siendo investigadas. Este test usa la composición directamente.
+; ============================================================
+
+(defn double [n]
+  (* n 2))
+
+(defn inc-one [n]
+  (+ n 1))
+
+(defn compose-double-inc [x]
+  (inc-one (double x)))
+
+(defn main []
+  (compose-double-inc 12))

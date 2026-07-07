@@ -128,16 +128,100 @@ pub struct SelectedBlock {
 // Main entry: select RISC-V instructions for a whole IR program
 // ---------------------------------------------------------------------------
 
-pub fn select_instructions(program: &IRProgram) -> Vec<SelectedFunction> {
-    program.functions.iter().map(select_function).collect()
+/// Tracks struct field offsets across the program.
+#[derive(Debug, Clone, Default)]
+pub struct Layouts {
+    field_offsets: std::collections::BTreeMap<(String, String), i64>,
+    struct_sizes: std::collections::BTreeMap<String, i64>,
 }
 
-fn select_function(func: &IRFunction) -> SelectedFunction {
+impl Layouts {
+    pub fn from_program(program: &IRProgram) -> Self {
+        let mut layouts = Layouts::default();
+        let mut value_types: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for function in &program.functions {
+            for (name, ty) in &function.parameters {
+                value_types.insert(name.clone(), ty.clone());
+            }
+            for block in &function.blocks {
+                for instr in &block.instructions {
+                    if let (Some(result), Some(ty)) = (instr.result_name(), instr.result_type()) {
+                        value_types.insert(result.to_string(), ty.to_string());
+                    }
+                }
+            }
+        }
+        let record_field = |layouts: &mut Layouts, object_ty: &str, field: &str| {
+            if is_scalar_type(object_ty) { return; }
+            let key = (object_ty.to_string(), field.to_string());
+            if !layouts.field_offsets.contains_key(&key) {
+                let next_index = layouts
+                    .field_offsets
+                    .keys()
+                    .filter(|(s, _)| s == object_ty)
+                    .count() as i64;
+                layouts.field_offsets.insert(key, next_index * 8);
+                layouts.struct_sizes.insert(object_ty.to_string(), (next_index + 1) * 8);
+            }
+        };
+        for function in &program.functions {
+            for block in &function.blocks {
+                for instr in &block.instructions {
+                    match instr {
+                        Instruction::GetField { object, field, .. } => {
+                            if let Some(obj_ty) = value_types.get(object) {
+                                record_field(&mut layouts, obj_ty, field);
+                            }
+                        }
+                        Instruction::SetField { object, field, .. } => {
+                            if let Some(obj_ty) = value_types.get(object) {
+                                record_field(&mut layouts, obj_ty, field);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        layouts
+    }
+    pub fn field_offset(&self, struct_name: &str, field: &str) -> i64 {
+        self.field_offsets
+            .get(&(struct_name.to_string(), field.to_string()))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+fn is_scalar_type(ty: &str) -> bool {
+    matches!(ty, "i64" | "f64" | "bool" | "string") || ty.starts_with("ptr_") || ty.starts_with("fn_")
+}
+
+pub fn select_instructions(program: &IRProgram) -> Vec<SelectedFunction> {
+    let layouts = Layouts::from_program(program);
+    program.functions.iter().map(|func| select_function(func, &layouts)).collect()
+}
+
+fn select_function(func: &IRFunction, layouts: &Layouts) -> SelectedFunction {
+    // Build type_map from function parameters and instructions for field offset resolution.
+    let mut type_map: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for (name, ty) in &func.parameters {
+        type_map.insert(name.clone(), ty.clone());
+    }
+    for block in &func.blocks {
+        for instr in &block.instructions {
+            if let (Some(result), Some(ty)) = (instr.result_name(), instr.result_type()) {
+                type_map.insert(result.to_string(), ty.to_string());
+            }
+        }
+    }
+
     let blocks = func
         .blocks
         .iter()
         .map(|block| {
-            let ops = select_block(block);
+            let ops = select_block(block, &type_map, layouts);
             SelectedBlock {
                 label: block.label.clone(),
                 ops,
@@ -152,10 +236,14 @@ fn select_function(func: &IRFunction) -> SelectedFunction {
     }
 }
 
-fn select_block(block: &BasicBlock) -> Vec<RiscVOp> {
+fn select_block(
+    block: &BasicBlock,
+    type_map: &std::collections::BTreeMap<String, String>,
+    layouts: &Layouts,
+) -> Vec<RiscVOp> {
     let mut ops = Vec::new();
     for instr in &block.instructions {
-        munch_instruction(instr, &mut ops);
+        munch_instruction(instr, &mut ops, type_map, layouts);
     }
     ops
 }
@@ -164,7 +252,12 @@ fn select_block(block: &BasicBlock) -> Vec<RiscVOp> {
 // Maximal Munch — instruction selector core
 // ---------------------------------------------------------------------------
 
-fn munch_instruction(instr: &Instruction, ops: &mut Vec<RiscVOp>) {
+fn munch_instruction(
+    instr: &Instruction,
+    ops: &mut Vec<RiscVOp>,
+    type_map: &std::collections::BTreeMap<String, String>,
+    layouts: &Layouts,
+) {
     match instr {
         Instruction::Const { result, value, .. } => {
             if let Some(n) = value.as_i64() {
@@ -527,17 +620,25 @@ fn munch_instruction(instr: &Instruction, ops: &mut Vec<RiscVOp>) {
             });
         }
 
-        Instruction::GetField { result, object, .. } => {
+        Instruction::GetField { result, object, field, ty } => {
+            let offset = layouts.field_offset(
+                type_map.get(object).map(String::as_str).unwrap_or(""),
+                field,
+            );
             ops.push(RiscVOp::Ld {
                 rd: result.clone(),
-                addr: AddressingMode::BaseOffset(object.clone(), 0),
+                addr: AddressingMode::BaseOffset(object.clone(), offset as i16),
             });
         }
 
-        Instruction::SetField { object, value, .. } => {
+        Instruction::SetField { object, field, value, ty } => {
+            let offset = layouts.field_offset(
+                type_map.get(object).map(String::as_str).unwrap_or(""),
+                field,
+            );
             ops.push(RiscVOp::Sd {
                 rs2: value.clone(),
-                addr: AddressingMode::BaseOffset(object.clone(), 0),
+                addr: AddressingMode::BaseOffset(object.clone(), offset as i16),
             });
         }
 
@@ -577,10 +678,15 @@ fn munch_instruction(instr: &Instruction, ops: &mut Vec<RiscVOp>) {
         }
 
         Instruction::AddrOf { result, operand, .. } => {
-            // lea: rd = operand (effectively a copy).
-            ops.push(RiscVOp::Mv {
+            // Address-of: store operand at [s0, #-16] and compute its address.
+            ops.push(RiscVOp::Sd {
+                rs2: operand.clone(),
+                addr: AddressingMode::BaseOffset("s0".to_string(), -16),
+            });
+            ops.push(RiscVOp::Addi {
                 rd: result.clone(),
-                rs1: operand.clone(),
+                rs1: "s0".to_string(),
+                imm: -16,
             });
         }
 
@@ -676,12 +782,19 @@ pub fn emit_assembly(functions: &[SelectedFunction]) -> String {
                 out.push_str(&format!(".L{}:\n", block.label));
             }
             for op in &block.ops {
+                // main siempre retorna 0 implícitamente.
+                if func.name == "main" && matches!(op, RiscVOp::Ret) {
+                    out.push_str("\tli a0, 0\n");
+                }
                 emit_op(&mut out, op);
             }
         }
 
         // Epilogue
         out.push_str(&format!(".L{}_end:\n", func.name));
+        if func.name == "main" {
+            out.push_str("\tli a0, 0\n");
+        }
         if func.frame_size > 0 {
             out.push_str(&format!("\tld ra, {}(sp)\n", func.frame_size - 8));
             out.push_str(&format!("\tld s0, {}(sp)\n", func.frame_size - 16));
@@ -777,6 +890,14 @@ fn emit_mem(out: &mut String, mnemonic: &str, reg: &str, addr: &AddressingMode) 
 mod tests {
     use super::*;
 
+    fn empty_type_map() -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::new()
+    }
+
+    fn empty_layouts() -> Layouts {
+        Layouts::default()
+    }
+
     #[test]
     fn addi_for_small_immediate() {
         let mut ops = vec![];
@@ -789,6 +910,8 @@ mod tests {
                 ty: "i64".into(),
             },
             &mut ops,
+            &empty_type_map(),
+            &empty_layouts(),
         );
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], RiscVOp::Addi { rd, rs1, imm } if rd == "%rd" && rs1 == "%rs" && *imm == 42));
@@ -805,6 +928,8 @@ mod tests {
                 ty: "i64".into(),
             },
             &mut ops,
+            &empty_type_map(),
+            &empty_layouts(),
         );
         // emit_li should produce at least 2 ops (lui + addi)
         assert!(ops.len() >= 2, "expected at least 2 ops, got {ops:?}");
@@ -820,6 +945,8 @@ mod tests {
                 ty: "i64".into(),
             },
             &mut ops,
+            &empty_type_map(),
+            &empty_layouts(),
         );
         assert!(matches!(&ops[0], RiscVOp::Li { .. }));
     }
@@ -836,6 +963,8 @@ mod tests {
                 ty: "i64".into(),
             },
             &mut ops,
+            &empty_type_map(),
+            &empty_layouts(),
         );
         assert_eq!(ops.len(), 1, "pow2 * should be SLLI: {ops:?}");
         assert!(matches!(&ops[0], RiscVOp::Slli { .. }));
@@ -853,6 +982,8 @@ mod tests {
                 ty: "bool".into(),
             },
             &mut ops,
+            &empty_type_map(),
+            &empty_layouts(),
         );
         assert_eq!(ops.len(), 2);
         assert!(matches!(&ops[0], RiscVOp::Xor { .. }));

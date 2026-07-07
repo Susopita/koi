@@ -1,0 +1,23 @@
+; ============================================================
+; 17_multi_function.carp
+; Múltiples funciones que se llaman entre sí (call graph)
+; Salida esperada (exit code): 60
+;
+;   area-rectangle(w=5, h=4) = 5*4 = 20
+;   area-triangle(b=6, h=4)  = (6*4)/2 = 12
+;   perimeter(a=3, b=4, c=5) = 3+4+5 = 12
+;   total = 20 + 12 + 12 - (... hmm)
+;
+;   Simplificamos: triple(n) = n * 3, sumit(a,b,c) = a+b+c
+;   main = sumit(triple(4), triple(8), triple(8))
+;        = 12 + 24 + 24 = 60
+; ============================================================
+
+(defn triple [n]
+  (* n 3))
+
+(defn sumit [a b c]
+  (+ a (+ b c)))
+
+(defn main []
+  (sumit (triple 4) (triple 8) (triple 8)))

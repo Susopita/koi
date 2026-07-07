@@ -17,7 +17,7 @@
 //! `x29` and `x30` are reserved only when the current function contains
 //! calls; otherwise they are free for allocation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use crate::backend::arm64::instruction_select::{A64Op, AddressingMode, SelectedBlock, SelectedFunction};
 
 // ---------------------------------------------------------------------------
@@ -41,15 +41,15 @@ const RESERVED: &[&str] = &["x29", "x30"];
 /// Predecessor and successor maps indexed by block label.
 #[derive(Debug, Clone)]
 struct ControlFlow {
-    predecessors: HashMap<String, Vec<String>>,
-    successors: HashMap<String, Vec<String>>,
+    predecessors: BTreeMap<String, Vec<String>>,
+    successors: BTreeMap<String, Vec<String>>,
 }
 
 /// Build the CFG from a list of selected blocks by inspecting the last
 /// op of each block (B, BCond, Ret, or fall-through end).
 fn build_cfg(blocks: &[SelectedBlock]) -> ControlFlow {
-    let mut preds: HashMap<String, Vec<String>> = HashMap::new();
-    let mut succs: HashMap<String, Vec<String>> = HashMap::new();
+    let mut preds: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut succs: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for (i, block) in blocks.iter().enumerate() {
         let label = &block.label;
@@ -105,21 +105,21 @@ fn build_cfg(blocks: &[SelectedBlock]) -> ControlFlow {
 ///
 /// Returns a vector parallel to `blocks` — each entry is the set of SSA
 /// value names that are live on entry to that block.
-fn compute_block_liveness(blocks: &[SelectedBlock]) -> Vec<HashSet<String>> {
+fn compute_block_liveness(blocks: &[SelectedBlock]) -> Vec<BTreeSet<String>> {
     let cfg = build_cfg(blocks);
 
     // Per-block use/def sets (value names, not registers).
-    let mut use_set: Vec<HashSet<String>> = vec![HashSet::new(); blocks.len()];
-    let mut def_set: Vec<HashSet<String>> = vec![HashSet::new(); blocks.len()];
+    let mut use_set: Vec<BTreeSet<String>> = vec![BTreeSet::new(); blocks.len()];
+    let mut def_set: Vec<BTreeSet<String>> = vec![BTreeSet::new(); blocks.len()];
     // Map block label → block index.
-    let label_to_idx: HashMap<&str, usize> = blocks
+    let label_to_idx: BTreeMap<&str, usize> = blocks
         .iter()
         .enumerate()
         .map(|(i, b)| (b.label.as_str(), i))
         .collect();
 
     for (i, block) in blocks.iter().enumerate() {
-        let mut seen_defs: HashSet<String> = HashSet::new();
+        let mut seen_defs: BTreeSet<String> = BTreeSet::new();
         for op in &block.ops {
             if let Some(d) = op_defines(op) {
                 if !seen_defs.contains(&d) {
@@ -133,7 +133,7 @@ fn compute_block_liveness(blocks: &[SelectedBlock]) -> Vec<HashSet<String>> {
         }
 
         // Reverse scan: uses before any definition are uses.
-        let mut seen_in_reverse: HashSet<String> = HashSet::new();
+        let mut seen_in_reverse: BTreeSet<String> = BTreeSet::new();
         for op in block.ops.iter().rev() {
             let used = op_uses(op);
             let defined = op_defines(op);
@@ -152,8 +152,8 @@ fn compute_block_liveness(blocks: &[SelectedBlock]) -> Vec<HashSet<String>> {
     // Dataflow fixpoint:
     //   in[b]  = use[b] ∪ (out[b] - def[b])
     //   out[b] = ∪ in[s]   for each successor s
-    let mut in_set: Vec<HashSet<String>> = vec![HashSet::new(); blocks.len()];
-    let mut out_set: Vec<HashSet<String>> = vec![HashSet::new(); blocks.len()];
+    let mut in_set: Vec<BTreeSet<String>> = vec![BTreeSet::new(); blocks.len()];
+    let mut out_set: Vec<BTreeSet<String>> = vec![BTreeSet::new(); blocks.len()];
 
     let mut changed = true;
     while changed {
@@ -161,7 +161,7 @@ fn compute_block_liveness(blocks: &[SelectedBlock]) -> Vec<HashSet<String>> {
 
         for i in 0..blocks.len() {
             // out[b] = union of in[s] for each successor
-            let mut new_out: HashSet<String> = HashSet::new();
+            let mut new_out: BTreeSet<String> = BTreeSet::new();
             if let Some(succs) = cfg.successors.get(&blocks[i].label) {
                 for succ_label in succs {
                     if let Some(&succ_idx) = label_to_idx.get(succ_label.as_str()) {
@@ -200,7 +200,7 @@ fn compute_block_liveness(blocks: &[SelectedBlock]) -> Vec<HashSet<String>> {
 pub struct Node {
     pub name: String,
     /// Registers this node cannot share (live at the same time).
-    pub interference: HashSet<usize>,
+    pub interference: BTreeSet<usize>,
     /// Preferred physical register colour, or `None`.
     pub colour: Option<usize>,
     /// Whether this node has been pre-coloured (e.g. ABI parameter regs).
@@ -219,7 +219,7 @@ pub struct Node {
 pub struct InterferenceGraph {
     pub nodes: Vec<Node>,
     /// Map from value name → node index.
-    pub name_to_idx: HashMap<String, usize>,
+    pub name_to_idx: BTreeMap<String, usize>,
     /// Physical register names.
     pub phys_regs: Vec<&'static str>,
     /// Number of colours available.
@@ -236,7 +236,7 @@ impl InterferenceGraph {
 
         InterferenceGraph {
             nodes: Vec::new(),
-            name_to_idx: HashMap::new(),
+            name_to_idx: BTreeMap::new(),
             num_colours: phys_regs.len(),
             phys_regs,
         }
@@ -251,7 +251,7 @@ impl InterferenceGraph {
         self.name_to_idx.insert(name.to_string(), idx);
         self.nodes.push(Node {
             name: name.to_string(),
-            interference: HashSet::new(),
+            interference: BTreeSet::new(),
             colour: None,
             pre_coloured: false,
             degree: 0,
@@ -330,12 +330,12 @@ impl InterferenceGraph {
 
     /// Assign physical registers via Chaitin-Briggs.
     /// Returns a map from value name → physical register name.
-    pub fn colour(&mut self) -> HashMap<String, String> {
-        let mut result: HashMap<String, String> = HashMap::new();
+    pub fn colour(&mut self) -> BTreeMap<String, String> {
+        let mut result: BTreeMap<String, String> = BTreeMap::new();
 
         // ---- Phase 1: Simplify ----
         let mut stack: Vec<usize> = Vec::new();
-        let mut remaining: HashSet<usize> = (0..self.nodes.len()).collect();
+        let mut remaining: BTreeSet<usize> = (0..self.nodes.len()).collect();
 
         loop {
             // Find a node with degree < num_colours.
@@ -378,10 +378,11 @@ impl InterferenceGraph {
         }
 
         // ---- Phase 2: Select (assign colours in reverse order) ----
-        let mut assigned: HashMap<usize, usize> = HashMap::new();
+        let mut assigned: BTreeMap<usize, usize> = BTreeMap::new();
+        let gpr_count = self.phys_regs.len();
 
         for &idx in stack.iter().rev() {
-            let mut used: HashSet<usize> = HashSet::new();
+            let mut used: BTreeSet<usize> = BTreeSet::new();
             for &nbr in &self.nodes[idx].interference {
                 if let Some(&c) = assigned.get(&nbr) {
                     used.insert(c);
@@ -390,7 +391,7 @@ impl InterferenceGraph {
 
             // Try to pick a colour that's not used by neighbours.
             let mut colour: Option<usize> = None;
-            for c in 0..self.num_colours {
+            for c in 0..gpr_count {
                 if !used.contains(&c) {
                     colour = Some(c);
                     break;
@@ -414,7 +415,7 @@ impl InterferenceGraph {
 
     /// Attempt coalescing: for each node, look at its coalesce group and
     /// try to assign adjacent colours (for ldp/stp).
-    pub fn coalesce_registers(&mut self, assignment: &mut HashMap<String, String>) {
+    pub fn coalesce_registers(&mut self, assignment: &mut BTreeMap<String, String>) {
         for i in 0..self.nodes.len() {
             if self.nodes[i].colour.is_none() {
                 continue;
@@ -445,7 +446,7 @@ impl InterferenceGraph {
 
                         if !conflict {
                             self.nodes[mate_idx].colour = Some(candidate);
-                            let reg_name = self.phys_regs[candidate].to_string();
+                            let reg_name = self.phys_regs[candidate % self.phys_regs.len()].to_string();
                             assignment.insert(mate_name.clone(), reg_name);
                             break;
                         }
@@ -513,6 +514,13 @@ fn op_uses(op: &A64Op) -> Vec<String> {
             v
         }
         A64Op::PrintI64Arg { reg } | A64Op::PrintStringArg { reg } | A64Op::PrintF64Arg { reg } => vec![reg.clone()],
+        A64Op::AddrOf { rn, .. } => vec![rn.clone()],
+        A64Op::FAdd { rn, rm, .. } | A64Op::FSub { rn, rm, .. }
+        | A64Op::FMul { rn, rm, .. } | A64Op::FDiv { rn, rm, .. } => vec![rn.clone(), rm.clone()],
+        A64Op::FCmp { rn, rm } => vec![rn.clone(), rm.clone()],
+        A64Op::FMov { rm, .. } => vec![rm.clone()],
+        A64Op::FMovImm { .. } => vec![],
+        A64Op::LoadFloat { .. } => vec![],
         _ => vec![],
     }
 }
@@ -549,7 +557,10 @@ fn op_defines(op: &A64Op) -> Option<String> {
         | A64Op::FDiv { rd, .. }
         | A64Op::FMov { rd, .. }
         | A64Op::FMovImm { rd, .. }
-        | A64Op::LoadString { rd, .. } => Some(rd.clone()),
+        | A64Op::LoadString { rd, .. }
+        | A64Op::LoadFuncAddr { rd, .. }
+        | A64Op::AddrOf { rd, .. }
+        | A64Op::LoadFloat { rd, .. } => Some(rd.clone()),
 
         A64Op::Ldp { rt1, .. } => {
             // LDP defines two registers; we return the first for
@@ -657,7 +668,7 @@ fn try_merge_pair(first: &A64Op, second: &A64Op) -> Option<A64Op> {
 /// `slot_offset` is the running offset counter (starts at 0, goes more
 /// negative with each spill). It persists across multiple calls so that
 /// subsequent spill batches allocate slots below previous ones.
-fn insert_spill_code(func: &mut SelectedFunction, spills: &[String], _assignment: &HashMap<String, String>, slot_offset: &mut i64) {
+fn insert_spill_code(func: &mut SelectedFunction, spills: &[String], _assignment: &BTreeMap<String, String>, slot_offset: &mut i64) {
     for spill_name in spills {
         *slot_offset -= 16; // each spill slot is 16 bytes
 
@@ -697,16 +708,16 @@ fn insert_spill_code(func: &mut SelectedFunction, spills: &[String], _assignment
 // Callee-saved register collection helper
 // ---------------------------------------------------------------------------
 
-/// Collect the set of callee-saved registers (x19–x28) used across all ops.
+/// Collect the set of callee-saved registers used across all ops.
 fn collect_callee_saved(func: &SelectedFunction) -> Vec<String> {
     let callee_saved = ["x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"];
     let mut used: Vec<String> = Vec::new();
     for block in &func.blocks {
         for op in &block.ops {
             let regs = all_regs_in_op(op);
-            for r in regs {
-                if callee_saved.contains(&r.as_str()) && !used.contains(&r) {
-                    used.push(r);
+            for r in &regs {
+                if callee_saved.contains(&r.as_str()) && !used.contains(r) {
+                    used.push(r.clone());
                 }
             }
         }
@@ -737,7 +748,7 @@ pub fn allocate_registers(functions: &mut [SelectedFunction]) {
         // instructions inserted by insert_spill_code (which re-define the
         // spilled virtual register) do not trigger infinite spill/recolour
         // loops.
-        let mut already_spilled: HashSet<String> = HashSet::new();
+        let mut already_spilled: BTreeSet<String> = BTreeSet::new();
         // Running stack-slot offset used by insert_spill_code. Starts at 0
         // and grows more negative with each spill slot. Persists across
         // multiple insert_spill_code calls so that later spills get slots
@@ -802,11 +813,17 @@ pub fn allocate_registers(functions: &mut [SelectedFunction]) {
 
                 for block in &mut func.blocks {
                     for op in &mut block.ops {
-                        rewrite_op(op, &assignment);
+                        rewrite_op(op, &assignment, &mut spill_temp);
                     }
                     coalesce_ldp_stp(&mut block.ops);
                 }
                 func.used_callee_saved = collect_callee_saved(func);
+                // Ensure at least 16 bytes of frame when AddrOf is used
+                // (needs space below fp for temp slot).
+                if func.blocks.iter().flat_map(|b| b.ops.iter()).any(|op| matches!(op, A64Op::AddrOf { .. }))
+                {
+                    func.frame_size = func.frame_size.max(16);
+                }
                 break;
             }
 
@@ -837,42 +854,55 @@ fn is_phys_reg(name: &str) -> bool {
             return n <= 30;
         }
     }
+    if name.starts_with('d') || name.starts_with('v') || name.starts_with('q') {
+        if let Ok(n) = name[1..].parse::<u32>() {
+            return n <= 31;
+        }
+    }
     matches!(name, "sp" | "xzr" | "fp" | "lr" | "wzr")
 }
 
 /// Replace virtual register names in an A64Op with physical ones.
-fn rewrite_op(op: &mut A64Op, assignment: &HashMap<String, String>) {
-    // Counter for fresh spill temporaries.
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SPILL_TMP: AtomicU64 = AtomicU64::new(0);
-
-    let phys = |name: &str| -> String {
+/// `spill_tmp` is a local counter for unallocated-register fallback names;
+/// it must be passed by the caller so that no global state is shared.
+fn rewrite_op(op: &mut A64Op, assignment: &BTreeMap<String, String>, spill_tmp: &mut u64) {
+    let phys = |name: &str, ctr: &mut u64| -> String {
         if let Some(p) = assignment.get(name) {
             return p.clone();
         }
-        // Unallocated virtual register — use a temp register.
+        // Physical registers (xN, dN, vN, sp, etc.) pass through unchanged.
+        if is_phys_reg(name) {
+            return name.to_string();
+        }
+        // Unallocated virtual register — assign a deterministic temp.
         if name.starts_with('%') {
-            let n = SPILL_TMP.fetch_add(1, Ordering::Relaxed);
+            let n = *ctr;
+            *ctr += 1;
             format!("x{}", 9 + (n % 19)) // x9–x28 as spill temps
         } else {
             name.to_string()
         }
     };
 
-    let rewrite_addr = |addr: &mut AddressingMode| {
-        match addr {
-            AddressingMode::Base(r)
-            | AddressingMode::BaseOffset(r, _)
-            | AddressingMode::PreIndexed(r, _)
-            | AddressingMode::PostIndexed(r, _) => {
-                *r = phys(r);
+    // Helper: rewrite a single address mode in-place.
+    // We cannot use a closure capturing `phys` because Rust closures can't
+    // borrow the same `spill_tmp` counter twice via nested closures.
+    macro_rules! rewrite_addr {
+        ($addr:expr) => {
+            match $addr {
+                AddressingMode::Base(r)
+                | AddressingMode::BaseOffset(r, _)
+                | AddressingMode::PreIndexed(r, _)
+                | AddressingMode::PostIndexed(r, _) => {
+                    *r = phys(r, spill_tmp);
+                }
+                AddressingMode::RegisterOffset { base, index, .. } => {
+                    *base = phys(base, spill_tmp);
+                    *index = phys(index, spill_tmp);
+                }
             }
-            AddressingMode::RegisterOffset { base, index, .. } => {
-                *base = phys(base);
-                *index = phys(index);
-            }
-        }
-    };
+        };
+    }
 
     match op {
         A64Op::Add { rd, rn, rm, .. }
@@ -880,59 +910,62 @@ fn rewrite_op(op: &mut A64Op, assignment: &HashMap<String, String>) {
         | A64Op::And { rd, rn, rm, .. }
         | A64Op::Orr { rd, rn, rm, .. }
         | A64Op::Eor { rd, rn, rm, .. } => {
-            *rd = phys(rd);
-            *rn = phys(rn);
-            rm.reg = phys(&rm.reg);
+            *rd = phys(rd, spill_tmp);
+            *rn = phys(rn, spill_tmp);
+            rm.reg = phys(&rm.reg, spill_tmp);
         }
         A64Op::Mul { rd, rn, rm, .. } | A64Op::Sdiv { rd, rn, rm, .. } => {
-            *rd = phys(rd);
-            *rn = phys(rn);
-            *rm = phys(rm);
+            *rd = phys(rd, spill_tmp);
+            *rn = phys(rn, spill_tmp);
+            *rm = phys(rm, spill_tmp);
         }
         A64Op::Lsl { rd, rn, .. }
         | A64Op::Lsr { rd, rn, .. }
         | A64Op::Asr { rd, rn, .. }
         | A64Op::AddImm { rd, rn, .. }
         | A64Op::SubImm { rd, rn, .. } => {
-            *rd = phys(rd);
-            *rn = phys(rn);
+            *rd = phys(rd, spill_tmp);
+            *rn = phys(rn, spill_tmp);
         }
-        A64Op::CmpImm { rn, .. } => { *rn = phys(rn); }
+        A64Op::CmpImm { rn, .. } => { *rn = phys(rn, spill_tmp); }
         A64Op::MovImm { rd, .. } | A64Op::Movz { rd, .. } | A64Op::Movk { rd, .. } => {
-            *rd = phys(rd);
+            *rd = phys(rd, spill_tmp);
         }
-        A64Op::MovReg { rd, rm } => { *rd = phys(rd); *rm = phys(rm); }
-        A64Op::Cmp { rn, rm } => { *rn = phys(rn); rm.reg = phys(&rm.reg); }
+        A64Op::MovReg { rd, rm } => { *rd = phys(rd, spill_tmp); *rm = phys(rm, spill_tmp); }
+        A64Op::Cmp { rn, rm } => { *rn = phys(rn, spill_tmp); rm.reg = phys(&rm.reg, spill_tmp); }
         A64Op::Csel { rd, rn, rm, .. } | A64Op::Csinc { rd, rn, rm, .. } => {
-            *rd = phys(rd); *rn = phys(rn); *rm = phys(rm);
+            *rd = phys(rd, spill_tmp); *rn = phys(rn, spill_tmp); *rm = phys(rm, spill_tmp);
         }
-        A64Op::Cset { rd, .. } => { *rd = phys(rd); }
+        A64Op::Cset { rd, .. } => { *rd = phys(rd, spill_tmp); }
         A64Op::Ldr { rd, addr, .. } | A64Op::Ldrb { rd, addr, .. }
         | A64Op::Ldrsw { rd, addr, .. } | A64Op::LdrFloat { rd, addr, .. } => {
-            *rd = phys(rd); rewrite_addr(addr);
+            *rd = phys(rd, spill_tmp); rewrite_addr!(addr);
         }
         A64Op::Str { rs, addr, .. } | A64Op::StrFloat { rs, addr, .. }
         | A64Op::Strb { rs, addr, .. } => {
-            *rs = phys(rs); rewrite_addr(addr);
+            *rs = phys(rs, spill_tmp); rewrite_addr!(addr);
         }
         A64Op::Ldp { rt1, rt2, addr, .. } | A64Op::Stp { rt1, rt2, addr, .. } => {
-            *rt1 = phys(rt1); *rt2 = phys(rt2); rewrite_addr(addr);
+            *rt1 = phys(rt1, spill_tmp); *rt2 = phys(rt2, spill_tmp); rewrite_addr!(addr);
         }
-        A64Op::Blr { reg } => { *reg = phys(reg); }
+        A64Op::Blr { reg } => { *reg = phys(reg, spill_tmp); }
         A64Op::FAdd { rd, rn, rm, .. } | A64Op::FSub { rd, rn, rm, .. }
         | A64Op::FMul { rd, rn, rm, .. } | A64Op::FDiv { rd, rn, rm, .. } => {
-            *rd = phys(rd); *rn = phys(rn); *rm = phys(rm);
+            *rd = phys(rd, spill_tmp); *rn = phys(rn, spill_tmp); *rm = phys(rm, spill_tmp);
         }
-        A64Op::FCmp { rn, rm } => { *rn = phys(rn); *rm = phys(rm); }
-        A64Op::FMov { rd, rm } => { *rd = phys(rd); *rm = phys(rm); }
-        A64Op::FMovImm { rd, .. } => { *rd = phys(rd); }
-        A64Op::LoadString { rd, .. } => { *rd = phys(rd); }
+        A64Op::FCmp { rn, rm } => { *rn = phys(rn, spill_tmp); *rm = phys(rm, spill_tmp); }
+        A64Op::FMov { rd, rm } => { *rd = phys(rd, spill_tmp); *rm = phys(rm, spill_tmp); }
+        A64Op::FMovImm { rd, .. } => { *rd = phys(rd, spill_tmp); }
+        A64Op::LoadString { rd, .. } => { *rd = phys(rd, spill_tmp); }
+        A64Op::LoadFloat { rd, .. } => { *rd = phys(rd, spill_tmp); }
         A64Op::PrintI64Arg { reg } | A64Op::PrintStringArg { reg } | A64Op::PrintF64Arg { reg } => {
-            *reg = phys(reg);
+            *reg = phys(reg, spill_tmp);
         }
         A64Op::B { .. } | A64Op::BCond { .. } | A64Op::Bl { .. }
         | A64Op::Ret | A64Op::StpFrame | A64Op::LdpFrame
         | A64Op::Prologue { .. } | A64Op::Epilogue => {}
+        A64Op::LoadFuncAddr { rd, .. } => { *rd = phys(rd, spill_tmp); }
+        A64Op::AddrOf { rd, rn } => { *rd = phys(rd, spill_tmp); *rn = phys(rn, spill_tmp); }
     }
 }
 

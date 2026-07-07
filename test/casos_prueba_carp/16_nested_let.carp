@@ -1,0 +1,17 @@
+; ============================================================
+; 16_nested_let.carp
+; Let bindings anidados (let dentro de let)
+; Salida esperada (exit code): 100
+;
+;   outer: x = 10
+;     inner: y = x * x = 100
+;   resultado = y
+; ============================================================
+
+(defn square-outer [x]
+  (let [outer x]
+    (let [inner (* outer outer)]
+      inner)))
+
+(defn main []
+  (square-outer 10))

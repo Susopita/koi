@@ -1,0 +1,16 @@
+; ============================================================
+; 07_loop.carp
+; Bucle loop con acumulador (counter-only, single binding)
+; Salida esperada (exit code): 9
+;
+;   loop cuenta hasta 9 y retorna el último valor i antes de
+;   que la condición falle.
+;   (loop [i 0] (< i 10) (+ i 1) i)
+;   → retorna el valor de i en la última iteración = 9
+; ============================================================
+
+(defn count-to [n]
+  (loop [i 0] (< i n) (+ i 1) i))
+
+(defn main []
+  (count-to 10))

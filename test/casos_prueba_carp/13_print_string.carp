@@ -1,0 +1,9 @@
+; ============================================================
+; 13_print_string.carp
+; Impresión de literales de cadena con print
+; Salida esperada: imprime "Hello, Pond!" en stdout, exit code 0
+; ============================================================
+
+(defn main []
+  (let [_ (print "Hello, Pond!")]
+    0))

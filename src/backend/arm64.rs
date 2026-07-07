@@ -41,8 +41,10 @@ impl TargetBackend for Backend {
         // Phase 3: Register allocation (graph coloring + coalescing).
         self::register_allocator::allocate_registers(&mut selected);
 
-        if !no_optimize {
-            // Phase 4: List scheduling (reorder ops to hide latencies).
+        // Phase 4: List scheduling (reorder ops to hide latencies).
+        // Disabled by default due to scheduler bugs with memory ops and
+        // float scratch registers.  Enable with KOI_ENABLE_SCHEDULER=1.
+        if std::env::var("KOI_ENABLE_SCHEDULER").as_deref() == Ok("1") {
             self::scheduler::schedule_functions(&mut selected);
         }
 

@@ -1,0 +1,17 @@
+; ============================================================
+; 20_array_sum.carp
+; Array: literal [a b c] e indexación con (index arr 0)
+; Salida esperada (exit code): 1
+;
+;   arr = [10, 20, 30]
+;   arr[0] = 10... demasiado grande para exit code útil
+;   arr = [1, 2, 3], arr[0] = 1
+;   Verificamos que la indexación no crashea retornando arr[0].
+; ============================================================
+
+(defn first-of-three []
+  (let [arr [1 2 3]]
+    (index arr 0)))
+
+(defn main []
+  (first-of-three))

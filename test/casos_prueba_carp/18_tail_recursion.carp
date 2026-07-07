@@ -1,0 +1,16 @@
+; ============================================================
+; 18_tail_recursion.carp
+; Recursión de cola: Fibonacci iterativo usando helper
+; Salida esperada (exit code): 55
+;
+;   fib-tail(10, 0, 1) computa fib(10) = 55
+;   (equivalente a cola-recursivo en lenguajes funcionales)
+; ============================================================
+
+(defn fib-tail [n a b]
+  (if (<= n 0)
+    a
+    (fib-tail (- n 1) b (+ a b))))
+
+(defn main []
+  (fib-tail 10 0 1))

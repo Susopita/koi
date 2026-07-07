@@ -1,0 +1,9 @@
+; ============================================================
+; 14_print_int.carp
+; Impresión de enteros i64 con print
+; Salida esperada: imprime "42" en stdout, exit code 0
+; ============================================================
+
+(defn main []
+  (let [_ (print 42)]
+    0))

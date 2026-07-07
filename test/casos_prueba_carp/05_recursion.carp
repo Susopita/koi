@@ -1,0 +1,15 @@
+; ============================================================
+; 05_recursion.carp
+; Recursión directa: factorial
+; Salida esperada (exit code): 120
+;
+;   fact(5) = 5 * fact(4) = 5*4*3*2*1 = 120
+; ============================================================
+
+(defn fact [n]
+  (if (<= n 1)
+    1
+    (* n (fact (- n 1)))))
+
+(defn main []
+  (fact 5))

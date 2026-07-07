@@ -1,0 +1,15 @@
+; ============================================================
+; 12_references.carp
+; Referencias y dereferencia: &x (addr-of) y *x (deref)
+; Salida esperada (exit code): 99
+;
+;   deref-inc toma una referencia, la dereferencia y suma 1
+;   n = 98, deref-inc(&n) = *(&n) + 1 = 99
+; ============================================================
+
+(defn deref-inc [r]
+  (+ *r 1))
+
+(defn main []
+  (let [n 98]
+    (deref-inc &n)))

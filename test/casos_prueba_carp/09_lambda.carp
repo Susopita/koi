@@ -1,0 +1,16 @@
+; ============================================================
+; 09_lambda.carp
+; Expresiones lambda (funciones anónimas) usadas inline
+; Salida esperada (exit code): 6
+;
+;   apply-fn acepta una función y un argumento
+;   (apply-fn (lambda [y] (+ y 1)) 5) = 6
+;
+; NOTA: Misma sintaxis que el test lambda existente en el repo.
+; ============================================================
+
+(defn apply-fn [f x]
+  (f x))
+
+(defn main []
+  (apply-fn (lambda [y] (+ y 1)) 5))

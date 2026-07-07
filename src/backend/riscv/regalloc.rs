@@ -21,7 +21,7 @@
 //! 5. Rewrite all ops to use physical register names.
 
 use std::collections::{HashMap, HashSet};
-use crate::backend::riscv::instruction_select::{RiscVOp, SelectedFunction};
+use crate::backend::riscv::instruction_select::{AddressingMode, RiscVOp, SelectedFunction};
 
 // ---------------------------------------------------------------------------
 // Register pools
@@ -249,6 +249,20 @@ pub fn allocate_and_frame(functions: &mut [SelectedFunction]) {
 
         // Build prologue/epilogue.
         func.frame_size = state.frame_size;
+        // Ensure at least 16 bytes of frame when AddrOf is used
+        // (needs [s0, #-16] for temp slot).
+        if func.frame_size < 16 {
+            let has_addrof = func.blocks.iter().flat_map(|b| b.ops.iter()).any(|op| {
+                if let RiscVOp::Sd { addr: AddressingMode::BaseOffset(base, -16), .. } = op {
+                    base == "s0"
+                } else {
+                    false
+                }
+            });
+            if has_addrof {
+                func.frame_size = 16;
+            }
+        }
         let prologue = build_prologue(&state);
         let epilogue = build_epilogue(&state);
 
